@@ -55,3 +55,18 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# IDE state
+.vs/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env.*
+!.env.example
