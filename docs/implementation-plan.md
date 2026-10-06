@@ -36,7 +36,7 @@ A REST API for Conway's Game of Life on .NET 8 (`net8.0`). A client uploads a bo
 
 | Method and path | Result | Success | Errors |
 |---|---|---|---|
-| `POST /api/v1/boards` | Stores a board | 201, `Location`, `{ "id" }` | 400, 413 |
+| `POST /api/v1/boards` | Stores a board | 201, `Location`, `{ "id" }` | 400, 413, 415 |
 | `GET /api/v1/boards/{id}` | The stored board (generation 0) | 200 | 400, 404 |
 | `GET /api/v1/boards/{id}/next` | Generation 1 | 200 | 400, 404, 503 |
 | `GET /api/v1/boards/{id}/generations/{n}` | Generation `n`, from 0 to `MaxGenerationsAhead` | 200 | 400, 404, 503 |
@@ -126,7 +126,7 @@ Tracked as GitHub issues, done in this order:
 ## Settled during implementation
 
 - How ASP.NET Core 8 formats the 400 responses it generates itself: pinned by tests in the upload issue.
-- Whether the `aspnet:8.0-alpine` image provides `wget` for the container health check: checked in the Compose issue.
+- The `aspnet:8.0-alpine` image has BusyBox `wget` and no `curl`, so the `api` health check runs `wget -q --spider`.
 - Simulation speed, and therefore the default limits: measured on an Apple M1 Max (10 cores, 64 GiB; Docker's VM has 10 CPUs and 7.7 GiB) with `cp .env.example .env`, `docker compose up --build -d`, then `scripts/measure-worst-case.sh`.
 - Limits of 1000 gave medians of 1.29 to 1.32 s one request at a time, so both limits are 500: medians of 0.67 to 0.76 s one request at a time and 0.91 to 1.32 s with 10 at once.
 - Not yet addressed: while 10 simulations run, a new request can wait for a free thread-pool thread, so the 503 for a request beyond the bound took up to 1.14 s and `/health/live` up to 0.93 s.
