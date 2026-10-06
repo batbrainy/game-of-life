@@ -17,6 +17,7 @@ public static partial class BoardEndpoints
         // No {id:guid} constraint: an id that is not a GUID then fails binding with 400, instead of matching no route with 404.
         boards.MapGet("/{id}", FetchAsync);
         boards.MapGet("/{id}/next", FetchNextGenerationAsync);
+        boards.MapGet("/{id}/final", FindFinalStateAsync);
     }
 
     private static async Task<Results<Created<UploadBoardResponse>, ValidationProblem>> UploadAsync(
@@ -77,6 +78,34 @@ public static partial class BoardEndpoints
         return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 1, board.Next()));
     }
 
+    private static async Task<Results<Ok<FinalStateResponse>, ProblemHttpResult>> FindFinalStateAsync(
+        Guid id,
+        IBoardRepository repository,
+        IOptions<GameOfLifeOptions> options,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        var board = await repository.FindAsync(id, cancellationToken);
+        if (board is null)
+        {
+            return BoardNotFound(id);
+        }
+
+        int maxGenerations = options.Value.MaxFinalStateGenerations;
+        var finalState = Simulation.FindFinalState(board, maxGenerations, cancellationToken);
+        if (finalState is null)
+        {
+            LogNoFinalState(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, maxGenerations);
+            return TypedResults.Problem(
+                detail: $"The board did not repeat an earlier generation within the limit of {maxGenerations} generations.",
+                statusCode: StatusCodes.Status422UnprocessableEntity,
+                title: "Board did not reach a final state",
+                extensions: new Dictionary<string, object?> { ["maxGenerations"] = maxGenerations });
+        }
+
+        return TypedResults.Ok(BoardMapper.ToFinalStateResponse(id, finalState));
+    }
+
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(
         detail: $"No board is stored under the id {id}.",
         statusCode: StatusCodes.Status404NotFound,
@@ -84,4 +113,7 @@ public static partial class BoardEndpoints
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Stored board {BoardId} of {Rows} x {Columns} cells")]
     private static partial void LogStored(ILogger logger, Guid boardId, int rows, int columns);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Board {BoardId} did not repeat an earlier generation within {MaxGenerations} generations")]
+    private static partial void LogNoFinalState(ILogger logger, Guid boardId, int maxGenerations);
 }
