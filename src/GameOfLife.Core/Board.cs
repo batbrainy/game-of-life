@@ -41,6 +41,26 @@ public sealed class Board : IEquatable<Board>
         }
     }
 
+    /// <summary>
+    /// Returns the next generation: a live cell with 2 or 3 live neighbours stays alive, a dead cell with exactly 3
+    /// becomes alive, and every other cell is dead. Positions outside the grid count as dead.
+    /// </summary>
+    public Board Next()
+    {
+        var next = new bool[_cells.Length];
+        for (int row = 0; row < Rows; row++)
+        {
+            for (int column = 0; column < Columns; column++)
+            {
+                bool isAlive = _cells[(row * Columns) + column];
+                int liveNeighbours = CountLiveNeighbours(row, column);
+                next[(row * Columns) + column] = isAlive ? liveNeighbours is 2 or 3 : liveNeighbours == 3;
+            }
+        }
+
+        return new Board(Rows, Columns, next);
+    }
+
     /// <summary>Creates a board from a copy of <paramref name="cells"/>, indexed [row, column].</summary>
     public static Board FromCells(bool[,] cells)
     {
@@ -74,4 +94,24 @@ public sealed class Board : IEquatable<Board>
     public override bool Equals(object? obj) => Equals(obj as Board);
 
     public override int GetHashCode() => _hashCode;
+
+    // Counts the live cells among the 8 around (row, column), skipping positions outside the grid.
+    private int CountLiveNeighbours(int row, int column)
+    {
+        int count = 0;
+        for (int neighbourRow = row - 1; neighbourRow <= row + 1; neighbourRow++)
+        {
+            for (int neighbourColumn = column - 1; neighbourColumn <= column + 1; neighbourColumn++)
+            {
+                bool isTheCellItself = neighbourRow == row && neighbourColumn == column;
+                bool isOutsideTheGrid = neighbourRow < 0 || neighbourRow >= Rows || neighbourColumn < 0 || neighbourColumn >= Columns;
+                if (!isTheCellItself && !isOutsideTheGrid && _cells[(neighbourRow * Columns) + neighbourColumn])
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
 }
