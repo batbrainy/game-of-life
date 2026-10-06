@@ -16,6 +16,7 @@ public static partial class BoardEndpoints
         boards.MapPost("/", UploadAsync);
         // No {id:guid} constraint: an id that is not a GUID then fails binding with 400, instead of matching no route with 404.
         boards.MapGet("/{id}", FetchAsync);
+        boards.MapGet("/{id}/next", FetchNextGenerationAsync);
     }
 
     private static async Task<Results<Created<UploadBoardResponse>, ValidationProblem>> UploadAsync(
@@ -60,6 +61,20 @@ public static partial class BoardEndpoints
         }
 
         return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 0, board));
+    }
+
+    private static async Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> FetchNextGenerationAsync(
+        Guid id,
+        IBoardRepository repository,
+        CancellationToken cancellationToken)
+    {
+        var board = await repository.FindAsync(id, cancellationToken);
+        if (board is null)
+        {
+            return BoardNotFound(id);
+        }
+
+        return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 1, board.Next()));
     }
 
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(
