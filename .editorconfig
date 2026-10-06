@@ -361,3 +361,10 @@ dotnet_naming_style.s_camelcase.required_suffix =
 dotnet_naming_style.s_camelcase.word_separator = 
 dotnet_naming_style.s_camelcase.capitalization = camel_case
 
+# C# files in the test projects
+[tests/**.cs]
+
+# xunit.v3 asks test methods to pass TestContext.Current.CancellationToken to every call that accepts a
+# CancellationToken, so that a cancelled test run stops calls in flight. That only matters when a run is cancelled
+# midway, and following it would add the same argument to the 128 calls it flags in these short tests.
+dotnet_diagnostic.xUnit1051.severity = none
