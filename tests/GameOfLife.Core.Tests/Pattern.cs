@@ -29,6 +29,22 @@ internal static class Pattern
         return cells;
     }
 
+    // A rows x columns board, dead except for the pattern, whose top-left cell is at (top, left).
+    public static Board Place(int rows, int columns, int top, int left, string pattern)
+    {
+        var shape = Parse(pattern);
+        var cells = new bool[rows, columns];
+        for (int row = 0; row < shape.GetLength(0); row++)
+        {
+            for (int column = 0; column < shape.GetLength(1); column++)
+            {
+                cells[top + row, left + column] = shape[row, column];
+            }
+        }
+
+        return Board.FromCells(cells);
+    }
+
     public static string Format(Board board)
     {
         var rows = new string[board.Rows];
