@@ -8,6 +8,8 @@ using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
 
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 using Npgsql;
 
@@ -42,6 +44,22 @@ builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.N
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 1024 * 1024);
 builder.Services.AddHealthChecks().AddCheck<DatabaseReadinessCheck>("database", tags: ["ready"]);
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status503ServiceUnavailable;
+    options.OnRejected = SimulationConcurrencyLimit.WriteServerBusyAsync;
+});
+// AddConcurrencyLimiter gives every request the same partition, so all of them share one limiter and the bound is
+// for the whole server, not for each client. The permit limit is read once, from the validated GameOfLife options.
+builder.Services.AddOptions<RateLimiterOptions>()
+    .Configure<IOptions<GameOfLifeOptions>>((options, limits) => options.AddConcurrencyLimiter(
+        SimulationConcurrencyLimit.PolicyName,
+        concurrency =>
+        {
+            concurrency.PermitLimit = limits.Value.MaxConcurrentSimulations;
+            concurrency.QueueLimit = 0;
+        }));
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -58,6 +76,7 @@ if (isMigrateCommand)
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseRateLimiter();
 
 if (app.Environment.IsDevelopment())
 {

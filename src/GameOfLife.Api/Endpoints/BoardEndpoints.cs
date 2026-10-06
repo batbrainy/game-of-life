@@ -15,7 +15,8 @@ public static partial class BoardEndpoints
         // Return types document the success responses and the 400 validation problems. ProducesProblem adds the rest:
         // the 404 and 422 problems, because ProblemHttpResult has no fixed status, and the 400 that ASP.NET Core itself
         // sends for an id that is not a GUID. The {id} routes have no {id:guid} constraint, so such an id fails binding
-        // with 400 instead of matching no route with 404.
+        // with 400 instead of matching no route with 404. The 503 on next, generations and final is what the rate
+        // limiter sends when they are at their concurrency limit.
         var boards = endpoints.MapGroup("/api/v1/boards");
 
         boards.MapPost("/", UploadAsync)
@@ -32,19 +33,25 @@ public static partial class BoardEndpoints
             .WithName("GetNextGeneration")
             .WithSummary("Get the next generation of a stored board")
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
 
         boards.MapGet("/{id}/generations/{n}", FetchGenerationAsync)
             .WithName("GetGeneration")
             .WithSummary("Get a stored board n generations ahead")
-            .ProducesProblem(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
 
         boards.MapGet("/{id}/final", FindFinalStateAsync)
             .WithName("GetFinalState")
             .WithSummary("Get the final state of a stored board")
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+            .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
     }
 
     private static async Task<Results<Created<UploadBoardResponse>, ValidationProblem>> UploadAsync(
