@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 
 using GameOfLife.Api.Configuration;
+using GameOfLife.Api.Endpoints;
 using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
 
@@ -60,6 +61,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.MapBoardEndpoints();
 
 // Runs no health checks: it only shows that the process is serving requests.
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });

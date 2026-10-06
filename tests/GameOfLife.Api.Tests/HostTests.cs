@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace GameOfLife.Api.Tests;
 
+[Collection(PostgresFixture.CollectionName)]
 public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
