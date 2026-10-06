@@ -65,6 +65,26 @@ public sealed class Board : IEquatable<Board>
         return new Board(rows, columns, copy);
     }
 
+    /// <summary>Returns a copy of the cells, row by row: the cell at (row, column) is at index row * Columns + column.</summary>
+    public bool[] ToCellArray() => _cells.ToArray();
+
+    /// <summary>Creates a board from a copy of <paramref name="cells"/>, laid out as <see cref="ToCellArray"/> returns them.</summary>
+    public static Board FromCellArray(int rows, int columns, bool[] cells)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
+        ArgumentNullException.ThrowIfNull(cells);
+
+        // Multiplied as longs: as ints, 65,536 x 65,536 wraps around to 0 and would accept an empty array.
+        long cellCount = (long)rows * columns;
+        if (cells.Length != cellCount)
+        {
+            throw new ArgumentException($"A {rows}x{columns} board has {cellCount} cells, but {cells.Length} were given.", nameof(cells));
+        }
+
+        return new Board(rows, columns, cells.ToArray());
+    }
+
     public bool Equals(Board? other) =>
         other is not null
         && Rows == other.Rows
