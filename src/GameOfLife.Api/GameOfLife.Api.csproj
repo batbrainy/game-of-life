@@ -10,4 +10,9 @@
     <ProjectReference Include="..\GameOfLife.Core\GameOfLife.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The resource name is the file name alone, which EmbeddedMigrationScripts reads the version and name from. -->
+    <EmbeddedResource Include="Persistence\Migrations\Scripts\*.sql" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
