@@ -17,6 +17,7 @@ public static partial class BoardEndpoints
         // No {id:guid} constraint: an id that is not a GUID then fails binding with 400, instead of matching no route with 404.
         boards.MapGet("/{id}", FetchAsync);
         boards.MapGet("/{id}/next", FetchNextGenerationAsync);
+        boards.MapGet("/{id}/generations/{n}", FetchGenerationAsync);
         boards.MapGet("/{id}/final", FindFinalStateAsync);
     }
 
@@ -76,6 +77,32 @@ public static partial class BoardEndpoints
         }
 
         return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 1, board.Next()));
+    }
+
+    private static async Task<Results<Ok<BoardStateResponse>, ValidationProblem, ProblemHttpResult>> FetchGenerationAsync(
+        Guid id,
+        int n,
+        IBoardRepository repository,
+        IOptions<GameOfLifeOptions> options,
+        CancellationToken cancellationToken)
+    {
+        int maxGenerationsAhead = options.Value.MaxGenerationsAhead;
+        if (n < 0 || n > maxGenerationsAhead)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["n"] = [$"The generation must be 0 to {maxGenerationsAhead}; this request asks for {n}."],
+            });
+        }
+
+        var board = await repository.FindAsync(id, cancellationToken);
+        if (board is null)
+        {
+            return BoardNotFound(id);
+        }
+
+        var advanced = Simulation.Advance(board, n, cancellationToken);
+        return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: n, advanced));
     }
 
     private static async Task<Results<Ok<FinalStateResponse>, ProblemHttpResult>> FindFinalStateAsync(
