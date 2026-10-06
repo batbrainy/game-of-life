@@ -1,5 +1,7 @@
 using System.Net;
 
+using GameOfLife.Api.Persistence;
+
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,6 +63,16 @@ public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         var exception = Assert.Throws<InvalidOperationException>(() => unconfiguredFactory.CreateClient());
         Assert.Contains("ConnectionStrings:GameOfLife", exception.Message);
+    }
+
+    [Fact]
+    public void BoardRepositoryIsOneSharedNpgsqlInstance()
+    {
+        var first = factory.Services.GetRequiredService<IBoardRepository>();
+        var second = factory.Services.GetRequiredService<IBoardRepository>();
+
+        Assert.IsType<NpgsqlBoardRepository>(first);
+        Assert.Same(first, second);
     }
 
     // Added after the application's own pipeline, so its exception travels back through the

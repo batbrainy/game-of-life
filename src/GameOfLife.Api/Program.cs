@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 
 using GameOfLife.Api.Configuration;
+using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
 
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -22,6 +23,7 @@ if (string.IsNullOrWhiteSpace(connectionString) && !isMigrateCommand)
 builder.Services.AddSingleton(services => new NpgsqlDataSourceBuilder(connectionString)
     .UseLoggerFactory(services.GetRequiredService<ILoggerFactory>())
     .Build());
+builder.Services.AddSingleton<IBoardRepository, NpgsqlBoardRepository>();
 
 builder.Services.AddOptions<GameOfLifeOptions>()
     .BindConfiguration(GameOfLifeOptions.SectionName)
