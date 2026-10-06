@@ -1,0 +1,68 @@
+name: game-of-life
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?copy .env.example to .env}
+      POSTGRES_USER: ${POSTGRES_USER:?copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:?copy .env.example to .env}:5432"
+    healthcheck:
+      # Checks over TCP: on first run the image's init server listens on the Unix socket only, so a socket check
+      # could pass before the real server is up.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1",
+             "-U", "${POSTGRES_USER:?copy .env.example to .env}",
+             "-d", "${POSTGRES_DB:?copy .env.example to .env}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  migrate:
+    # migrate and api run the same image. Only api builds it, so docker compose up --build builds it once and
+    # docker compose build api rebuilds it. pull_policy: never stops Compose from trying to pull it from a registry:
+    # the image is only ever built locally.
+    image: game-of-life-api
+    pull_policy: never
+    command: ["migrate"]
+    environment:
+      ConnectionStrings__GameOfLife: >-
+        Host=db;
+        Database=${POSTGRES_DB:?copy .env.example to .env};
+        Username=${POSTGRES_USER:?copy .env.example to .env};
+        Password=${POSTGRES_PASSWORD:?copy .env.example to .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: game-of-life-api
+    build: .
+    pull_policy: never
+    environment:
+      ConnectionStrings__GameOfLife: >-
+        Host=db;
+        Database=${POSTGRES_DB:?copy .env.example to .env};
+        Username=${POSTGRES_USER:?copy .env.example to .env};
+        Password=${POSTGRES_PASSWORD:?copy .env.example to .env}
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:?copy .env.example to .env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${API_PORT:?copy .env.example to .env}:8080"
+    healthcheck:
+      # The image has BusyBox wget but no curl.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  pgdata:
