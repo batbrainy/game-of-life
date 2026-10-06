@@ -53,7 +53,7 @@ public sealed class MigrateCommandTests(PostgresFixture postgres)
     public async Task ApiStartedWithoutTheCommandRunsNoMigrations()
     {
         string connectionString = await postgres.CreateDatabaseAsync();
-        using var api = new ApiFactory();
+        using var api = new ApiFactory(postgres);
         using var configuredApi = api.WithSettings(("ConnectionStrings:GameOfLife", connectionString));
         using var client = configuredApi.CreateClient();
 

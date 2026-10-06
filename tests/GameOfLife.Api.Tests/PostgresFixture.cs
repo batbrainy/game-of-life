@@ -1,3 +1,7 @@
+using GameOfLife.Api.Persistence.Migrations;
+
+using Microsoft.Extensions.Logging.Abstractions;
+
 using Npgsql;
 
 using Testcontainers.PostgreSql;
@@ -31,6 +35,16 @@ public sealed class PostgresFixture : IAsyncLifetime
 
         builder.Database = name;
         return builder.ConnectionString;
+    }
+
+    /// <summary>Creates a database with every embedded migration applied and returns a connection string to it.</summary>
+    public async Task<string> CreateMigratedDatabaseAsync()
+    {
+        string connectionString = await CreateDatabaseAsync();
+        await using var dataSource = NpgsqlDataSource.Create(connectionString);
+        await new MigrationRunner(dataSource, NullLogger<MigrationRunner>.Instance)
+            .ApplyAsync(EmbeddedMigrationScripts.Load(), CancellationToken.None);
+        return connectionString;
     }
 }
 
