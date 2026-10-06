@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 using GameOfLife.Api.Configuration;
 using GameOfLife.Api.Endpoints;
+using GameOfLife.Api.Errors;
 using GameOfLife.Api.Health;
 using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
@@ -33,6 +34,7 @@ builder.Services.AddOptions<GameOfLifeOptions>()
     .ValidateOnStart();
 
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<DatabaseUnavailableExceptionHandler>();
 // The default is to throw in Development and return 400 elsewhere; return 400 everywhere.
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = false);
 // Rejects numbers sent as strings, such as "1", instead of converting them.
