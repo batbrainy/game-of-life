@@ -20,11 +20,7 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
         });
 
     // xUnit runs this before the first test that uses this factory, and so before the host is built.
-    public async Task InitializeAsync() => _connectionString = await postgres.CreateMigratedDatabaseAsync();
-
-    // The database is removed with the container at the end of the test run. Implemented explicitly because
-    // WebApplicationFactory has a DisposeAsync of its own, which returns a ValueTask.
-    Task IAsyncLifetime.DisposeAsync() => Task.CompletedTask;
+    public async ValueTask InitializeAsync() => _connectionString = await postgres.CreateMigratedDatabaseAsync();
 
     // UseSetting rather than ConfigureAppConfiguration: Program reads the connection string before
     // builder.Build(), and only UseSetting values are visible to it by then.

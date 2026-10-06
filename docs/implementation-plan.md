@@ -121,7 +121,7 @@ Tracked as GitHub issues, done in this order:
 
 ## Tooling
 
-.NET SDK 8.0 pinned by `global.json`; Npgsql 10.0.3; Testcontainers.PostgreSql 4.15.0; Microsoft.AspNetCore.Mvc.Testing 8.0.31; xUnit and the OpenAPI packages as scaffolded by the .NET 8 templates; PostgreSQL 16 (`postgres:16-alpine`); Docker Compose v2.
+.NET SDK 8.0 pinned by `global.json`; Npgsql 10.0.3; Testcontainers.PostgreSql 4.15.0; Microsoft.AspNetCore.Mvc.Testing 8.0.31; xunit.v3 4.0.1 (the xunit.v3.mtp-off package, run by `dotnet test` through xunit.runner.visualstudio); the OpenAPI packages as scaffolded by the .NET 8 templates; PostgreSQL 16 (`postgres:16-alpine`); Docker Compose v2.
 
 ## Settled during implementation
 
