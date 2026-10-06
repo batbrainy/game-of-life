@@ -15,9 +15,9 @@ public sealed class OpenApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     {
         { "/api/v1/boards", "post", "UploadBoard", "Upload a board", ["201", "400"] },
         { "/api/v1/boards/{id}", "get", "GetBoard", "Get a stored board", ["200", "400", "404"] },
-        { "/api/v1/boards/{id}/next", "get", "GetNextGeneration", "Get the next generation of a stored board", ["200", "400", "404"] },
-        { "/api/v1/boards/{id}/generations/{n}", "get", "GetGeneration", "Get a stored board n generations ahead", ["200", "400", "404"] },
-        { "/api/v1/boards/{id}/final", "get", "GetFinalState", "Get the final state of a stored board", ["200", "400", "404", "422"] },
+        { "/api/v1/boards/{id}/next", "get", "GetNextGeneration", "Get the next generation of a stored board", ["200", "400", "404", "503"] },
+        { "/api/v1/boards/{id}/generations/{n}", "get", "GetGeneration", "Get a stored board n generations ahead", ["200", "400", "404", "503"] },
+        { "/api/v1/boards/{id}/final", "get", "GetFinalState", "Get the final state of a stored board", ["200", "400", "404", "422", "503"] },
     };
 
     [Theory]
