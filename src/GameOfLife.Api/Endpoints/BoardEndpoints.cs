@@ -12,13 +12,39 @@ public static partial class BoardEndpoints
 {
     public static void MapBoardEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        // Return types document the success responses and the 400 validation problems. ProducesProblem adds the rest:
+        // the 404 and 422 problems, because ProblemHttpResult has no fixed status, and the 400 that ASP.NET Core itself
+        // sends for an id that is not a GUID. The {id} routes have no {id:guid} constraint, so such an id fails binding
+        // with 400 instead of matching no route with 404.
         var boards = endpoints.MapGroup("/api/v1/boards");
-        boards.MapPost("/", UploadAsync);
-        // No {id:guid} constraint: an id that is not a GUID then fails binding with 400, instead of matching no route with 404.
-        boards.MapGet("/{id}", FetchAsync);
-        boards.MapGet("/{id}/next", FetchNextGenerationAsync);
-        boards.MapGet("/{id}/generations/{n}", FetchGenerationAsync);
-        boards.MapGet("/{id}/final", FindFinalStateAsync);
+
+        boards.MapPost("/", UploadAsync)
+            .WithName("UploadBoard")
+            .WithSummary("Upload a board");
+
+        boards.MapGet("/{id}", FetchAsync)
+            .WithName("GetBoard")
+            .WithSummary("Get a stored board")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        boards.MapGet("/{id}/next", FetchNextGenerationAsync)
+            .WithName("GetNextGeneration")
+            .WithSummary("Get the next generation of a stored board")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        boards.MapGet("/{id}/generations/{n}", FetchGenerationAsync)
+            .WithName("GetGeneration")
+            .WithSummary("Get a stored board n generations ahead")
+            .ProducesProblem(StatusCodes.Status404NotFound);
+
+        boards.MapGet("/{id}/final", FindFinalStateAsync)
+            .WithName("GetFinalState")
+            .WithSummary("Get the final state of a stored board")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
     }
 
     private static async Task<Results<Created<UploadBoardResponse>, ValidationProblem>> UploadAsync(

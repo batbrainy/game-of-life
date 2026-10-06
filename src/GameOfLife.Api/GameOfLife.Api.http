@@ -1,0 +1,41 @@
+@GameOfLife.Api_HostAddress = http://localhost:5055
+# Paste the id that the upload request returns.
+@boardId = 00000000-0000-0000-0000-000000000000
+
+POST {{GameOfLife.Api_HostAddress}}/api/v1/boards
+Content-Type: application/json
+Accept: application/json
+
+{
+  "cells": [[0,1,0],[0,1,0],[0,1,0]]
+}
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}
+Accept: application/json
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/next
+Accept: application/json
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/generations/10
+Accept: application/json
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/final
+Accept: application/json
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/health/live
+
+###
+
+GET {{GameOfLife.Api_HostAddress}}/health/ready
+
+###
