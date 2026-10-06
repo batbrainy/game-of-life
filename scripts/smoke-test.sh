@@ -149,7 +149,7 @@ response=$(upload "@$script_dir/boards/r-pentomino-68.json")
 check 'upload the 68 x 68 R-pentomino' "$response" 201
 r_pentomino_id=$(id_of "$response")
 
-# On this board the R-pentomino first repeats a generation at 1165, beyond the default limit of 1000.
+# On this board the R-pentomino first repeats a generation at 1165, beyond the default limit of 500.
 response=$(request "$boards_url/$r_pentomino_id/final")
 check 'final state of the R-pentomino returns 422' "$response" 422
 

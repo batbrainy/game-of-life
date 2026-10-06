@@ -13,11 +13,13 @@ public sealed class GameOfLifeOptions
     [Range(1, int.MaxValue)]
     public int MaxColumns { get; set; } = 256;
 
+    // 500 keeps the slowest request these two limits allow, on a 256 x 256 board, under a second when requests run one
+    // at a time on the machine in docs/implementation-plan.md, as measured by scripts/measure-worst-case.sh.
     [Range(1, int.MaxValue)]
-    public int MaxGenerationsAhead { get; set; } = 1000;
+    public int MaxGenerationsAhead { get; set; } = 500;
 
     [Range(1, int.MaxValue)]
-    public int MaxFinalStateGenerations { get; set; } = 1000;
+    public int MaxFinalStateGenerations { get; set; } = 500;
 
     /// <summary>The most simulations that run at once. Each one keeps a core busy, so the default is the number of processors.</summary>
     [Range(1, int.MaxValue)]
