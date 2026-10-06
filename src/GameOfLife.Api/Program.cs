@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 using GameOfLife.Api.Configuration;
 using GameOfLife.Api.Endpoints;
+using GameOfLife.Api.Health;
 using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
 
@@ -37,7 +38,7 @@ builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadReq
 // Rejects numbers sent as strings, such as "1", instead of converting them.
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 1024 * 1024);
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks().AddCheck<DatabaseReadinessCheck>("database", tags: ["ready"]);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -66,6 +67,14 @@ app.MapBoardEndpoints();
 
 // Runs no health checks: it only shows that the process is serving requests.
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+
+// Writes no body, so UseStatusCodePages answers a 503 with problem details, as for other errors. The default writer
+// would send plain text, and a 200 needs no body.
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("ready"),
+    ResponseWriter = (_, _) => Task.CompletedTask,
+});
 
 app.Run();
 return 0;
