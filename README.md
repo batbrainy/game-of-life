@@ -87,6 +87,46 @@ Generation 3 is when repetition was detected. `cycleStartGeneration` is where th
 
 A projection reports `sourceGeneration` because a concurrent mutation can finish after its snapshot was read. Its result is always N steps from that snapshot, even if storage has since advanced.
 
+### Manual checks in Swagger and PostgreSQL
+
+Open http://127.0.0.1:8080/swagger/index.html. Expand an operation, select **Try it out**, fill its request body or parameters, and select **Execute**. Upload returns an `id`; copy it into subsequent requests for that board. Each upload creates a separate board.
+
+In pgAdmin, register a server with host `127.0.0.1`, port `5433`, maintenance database `gameoflife`, and username `gameoflife` when using the example environment. Use `POSTGRES_PASSWORD` from your local `.env`; custom environment values also override these connection details. Select the `gameoflife` database and open **Query Tool**.
+
+Replace the sample UUID below with your upload's `id`. Run the query again after each API request to refresh the results:
+
+```sql
+SELECT id, generation, status, row_count, column_count, cells,
+       cycle_start_generation, cycle_length,
+       created_at, updated_at, completed_at
+FROM public.boards
+WHERE id = '00000000-0000-0000-0000-000000000000'::uuid;
+```
+
+Run the following blinker steps in order, using the same uploaded ID:
+
+| Step | Swagger request | Expected API response and stored row |
+|---|---|---|
+| Upload | `POST /api/v1/boards` with `{"cells":[[0,1,0],[0,1,0],[0,1,0]]}` | 201. DB: generation 0, Active, vertical cells; terminal metadata is null. |
+| Advance | `POST /api/v1/boards/{id}/next` | 200. DB: generation 1, Active, `[[0,0,0],[1,1,1],[0,0,0]]`. |
+| Project | `GET /api/v1/boards/{id}/generations/1` | 200: generation 2, sourceGeneration 1, vertical cells. DB remains generation 1 with horizontal cells; timestamps also stay unchanged. |
+| Finish | `POST /api/v1/boards/{id}/final` | 200. DB: generation 3, Cycle, horizontal cells, cycle_start_generation 1, cycle_length 2, completed_at populated. |
+| Repeat Final | Repeat the previous request | 200 with the same result; the entire stored row, including timestamps, stays unchanged. |
+| Advance a finished board | `POST /api/v1/boards/{id}/next` | 409 with boardStatus Cycle; the stored row stays unchanged. |
+
+Additional cases use separate boards:
+
+| Case | Request sequence | Expected result |
+|---|---|---|
+| Still life | Upload `{"cells":[[1,1],[1,1]]}`, then Final | 200: generation 1, Stable, unchanged cells; DB cycle_start_generation 0 and cycle_length 1. |
+| Single cell dies | Upload `{"cells":[[1]]}`, then Next, then Final | Next: generation 1, Active, `[[0]]`. Final: generation 2, Stable, cycle_start_generation 1 and cycle_length 1. |
+| Invalid shape | Upload `{"cells":[[1,0],[1]]}` | 400; no row inserted. |
+| Invalid cell | Upload `{"cells":[[2]]}` | 400; no row inserted. |
+| Invalid projection | Request generations/-1 for an existing ID | 400; no stored state or timestamp changes. |
+| Unknown board | Fetch a UUID that is absent from the database | 404; no row inserted. |
+
+For rejected uploads, compare `SELECT count(*) FROM public.boards;` before and after the request while no other uploads are running. API `period` maps to DB `cycle_length`, and `cycleStartGeneration` maps to `cycle_start_generation`. PostgreSQL holds the current state only; advancing a board updates its existing row.
+
 ## Design
 
 ### Components and dependencies
