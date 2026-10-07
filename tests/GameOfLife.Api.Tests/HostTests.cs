@@ -85,7 +85,8 @@ public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         int minimum = MinimumWorkerThreadsAfterStartup(defaultFactory, startingMinimum: Environment.ProcessorCount);
 
-        Assert.Equal(Environment.ProcessorCount + new GameOfLifeOptions().MaxConcurrentSimulations, minimum);
+        var configured = defaultFactory.Services.GetRequiredService<IOptions<GameOfLifeOptions>>().Value;
+        Assert.Equal(Environment.ProcessorCount + configured.MaxConcurrentSimulations, minimum);
     }
 
     [Fact]

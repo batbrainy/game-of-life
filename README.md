@@ -209,20 +209,23 @@ Terminal conflicts include `boardStatus` and `finalStateUrl`. Iteration-limit er
 
 Application errors use Problem Details. Content negotiation can produce plain-text or empty responses when the client refuses JSON. The request-body 413 may omit `type`. Kestrel can reject malformed headers or oversized headers before the application pipeline, with an empty 400 or 431 body regardless of Accept.
 
-Settings bind from the `GameOfLife` configuration section and are validated on startup:
+Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.Api/appsettings.json). Environment variables or environment-specific settings can override each setting below. `GameOfLifeOptions` contains validation, with no duplicated defaults or fixed policy ceilings.
 
-| Setting | Default | Allowed range |
+| Setting | Default | Validation |
 |---|---|---|
-| MaxRows | 256 | 1–1024 |
-| MaxColumns | 256 | 1–1024 |
-| MaxGenerationsAhead | 500 | 1–10000; each request accepts N from 0 through this limit |
-| MaxFinalStateGenerations | 500 | 1–10000 |
-| MaxConcurrentSimulations | min(processor count, 8) | 1–16 per app instance |
-| BoardLockTimeoutSeconds | 5 | 1–30 |
+| MaxRows | 256 | Positive; configured dimensions must fit MaxBoardCells and the engine array |
+| MaxColumns | 256 | Positive; same combined dimension checks |
+| MaxGenerationsAhead | 500 | Positive; requests accept N from 0 through this limit |
+| MaxFinalStateGenerations | 500 | Positive; combined work and retained-state budgets apply |
+| MaxConcurrentSimulations | 8 | Positive; retained-state budget, pool headroom and runtime worker capacity apply |
+| BoardLockTimeoutSeconds | 5 | Positive; must fit the runtime timer duration |
+| MaxBoardCells | 65536 | Positive; bounds MaxRows times MaxColumns |
+| MaxSimulationCellSteps | 67108864 | Positive; bounds board size times the larger iteration limit |
+| MaxRetainedStateBytes | 536870912 (512 MiB) | Positive; bounds retained cell buffers across concurrent Final runs |
 
-Combined validation additionally limits configured dimensions to 65,536 cells, board size times the larger iteration limit to 67,108,864 cell-steps, and estimated concurrent final-state buffers to 512 MiB. These are conservative admission budgets, not a guarantee of total process memory or latency. JSON/HTTP processing, connection pools, GC, and other runtime overhead also consume resources. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
+All settings are validated on startup. Retained cell buffers are estimated as `MaxRows * MaxColumns * (MaxFinalStateGenerations + 1) * MaxConcurrentSimulations` bytes: the initial board plus each computed board, with one byte per bool cell. This budget excludes JSON conversion, object/dictionary overhead, HTTP processing, connection pools, and GC. It is not a guarantee of total process memory or latency. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
 
-Example host setting: `GameOfLife__BoardLockTimeoutSeconds=10`. For Compose, add settings under `services.api.environment` in a local `compose.override.yaml`; restart the API after changing them. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
+For example, `GameOfLife__MaxRows=2048` and `GameOfLife__MaxColumns=1` permit a tall board within the default resource budgets; there is no fixed 1024-row ceiling. `GameOfLife__BoardLockTimeoutSeconds=10` changes lock waiting. Increase resource budgets deliberately when a larger workload requires them, after measuring available CPU and memory. For Compose, add settings under `services.api.environment` in a local `compose.override.yaml`; recreate the API after changing them. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
 
 ## Build and test
 
@@ -244,13 +247,13 @@ scripts/measure-worst-case.sh http://localhost:8080 8
 scripts/verify-restart.sh
 ```
 
-`smoke-test.sh` verifies mutation, projection, completion, and HTTP errors. `measure-worst-case.sh` times full-limit searches sequentially, concurrently on different GUIDs, and under same-GUID contention; the latter may reach the lock timeout. Pass a concurrency value matching the running API configuration. It rejects early/cached final results for its deterministic test pattern.
+`smoke-test.sh` verifies mutation, projection, completion, and HTTP errors. `measure-worst-case.sh` times full-limit searches sequentially, concurrently on different GUIDs, and under same-GUID contention; the latter may reach the lock timeout. Its required concurrency argument must match the running API configuration. It rejects early/cached final results for its deterministic test pattern.
 
 `verify-restart.sh` restarts, kills, and recreates the selected Compose project's containers. It verifies both an advanced Active board and a completed Cycle board. Select a dedicated project with COMPOSE_PROJECT_NAME and separate ports, image tag, and volume before running it; do not use a stack whose other work must remain running.
 
 ### Verification and measurements
 
-The current implementation passed 241 tests (92 core and 149 API/PostgreSQL), a warning-free .NET 8 build, formatting verification, 19 Docker smoke checks, and 13 restart/crash checks. The restart checks cover API restart, abrupt API termination, abrupt PostgreSQL termination, and container recreation while retaining the database volume.
+The current implementation passed 263 tests (92 core and 171 API/configuration/PostgreSQL), a warning-free .NET 8 build, formatting verification, 19 Docker smoke checks, and 13 restart/crash checks. Configuration tests cover overrides above the former fixed ceilings, budget boundaries, positive values, and arithmetic/runtime limits. The restart checks cover API restart, abrupt API termination, abrupt PostgreSQL termination, and container recreation while retaining the database volume.
 
 Measured with the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
 

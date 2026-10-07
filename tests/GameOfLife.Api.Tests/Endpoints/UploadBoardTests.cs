@@ -114,6 +114,17 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData(2048, 1)]
+    [InlineData(1, 2048)]
+    public async Task ConfiguredDimensionsCanExceedTheFormerHardcodedCeiling(int rows, int columns)
+    {
+        using var configured = factory.WithSettings(("GameOfLife:MaxRows", $"{rows}"), ("GameOfLife:MaxColumns", $"{columns}"));
+        using var client = configured.CreateClient();
+        using var response = await PostJsonAsync(client, DeadGridJson(rows, columns));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     // ASP.NET Core rejects these bodies itself, before the endpoint runs.
     [Theory]
     [InlineData("""{ "cells": [[0,1,0],[0,1,0]""")]

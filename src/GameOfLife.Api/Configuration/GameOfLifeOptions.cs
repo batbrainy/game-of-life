@@ -9,44 +9,78 @@ public sealed class GameOfLifeOptions : IValidatableObject
 {
     public const string SectionName = "GameOfLife";
 
-    [Range(1, 1024)]
-    public int MaxRows { get; set; } = 256;
+    [Range(1, int.MaxValue)]
+    public int MaxRows { get; set; }
 
-    [Range(1, 1024)]
-    public int MaxColumns { get; set; } = 256;
+    [Range(1, int.MaxValue)]
+    public int MaxColumns { get; set; }
 
-    [Range(1, 10000)]
-    public int MaxGenerationsAhead { get; set; } = 500;
+    [Range(1, int.MaxValue)]
+    public int MaxGenerationsAhead { get; set; }
 
-    [Range(1, 10000)]
-    public int MaxFinalStateGenerations { get; set; } = 500;
+    [Range(1, int.MaxValue)]
+    public int MaxFinalStateGenerations { get; set; }
 
-    [Range(1, 16)]
-    public int MaxConcurrentSimulations { get; set; } = Math.Min(Environment.ProcessorCount, 8);
+    [Range(1, int.MaxValue)]
+    public int MaxConcurrentSimulations { get; set; }
 
-    [Range(1, 30)]
-    public int BoardLockTimeoutSeconds { get; set; } = 5;
+    [Range(1, int.MaxValue)]
+    public int BoardLockTimeoutSeconds { get; set; }
+
+    [Range(1, int.MaxValue)]
+    public int MaxBoardCells { get; set; }
+
+    [Range(1, long.MaxValue)]
+    public long MaxSimulationCellSteps { get; set; }
+
+    [Range(1, long.MaxValue)]
+    public long MaxRetainedStateBytes { get; set; }
 
     public bool AllowsSimulation(Board board) => board.Rows <= MaxRows && board.Columns <= MaxColumns;
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         long cells = (long)MaxRows * MaxColumns;
-        if (cells > 65536)
+        if (cells > Array.MaxLength)
         {
-            yield return new ValidationResult("MaxRows * MaxColumns must not exceed 65536 cells.", [nameof(MaxRows), nameof(MaxColumns)]);
+            yield return new ValidationResult("MaxRows * MaxColumns exceeds the runtime's maximum array length.",
+                [nameof(MaxRows), nameof(MaxColumns)]);
+            yield break;
         }
 
-        if (cells * Math.Max(MaxGenerationsAhead, MaxFinalStateGenerations) > 64L * 1024 * 1024)
+        if (cells > MaxBoardCells)
         {
-            yield return new ValidationResult("The maximum board size and iteration limits must not exceed 67108864 cell-steps per simulation.",
-                [nameof(MaxGenerationsAhead), nameof(MaxFinalStateGenerations)]);
+            yield return new ValidationResult("MaxRows * MaxColumns must not exceed MaxBoardCells.",
+                [nameof(MaxRows), nameof(MaxColumns), nameof(MaxBoardCells)]);
         }
 
-        // Includes retained states and conversion buffers; the process still needs memory for HTTP, the pool and GC.
-        if (cells * (MaxFinalStateGenerations + 8L) * MaxConcurrentSimulations > 512L * 1024 * 1024)
+        if (cells * Math.Max(MaxGenerationsAhead, MaxFinalStateGenerations) > MaxSimulationCellSteps)
         {
-            yield return new ValidationResult("Concurrent final-state buffers must not exceed the 512 MiB budget.", [nameof(MaxConcurrentSimulations)]);
+            yield return new ValidationResult("Board size times the larger iteration limit must not exceed MaxSimulationCellSteps.",
+                [nameof(MaxGenerationsAhead), nameof(MaxFinalStateGenerations), nameof(MaxSimulationCellSteps)]);
+        }
+
+        // Final retains the starting board plus each computed board, with one byte per bool cell.
+        // Decimal prevents overflow when large settings are validated. Conversion/object/runtime overhead is extra.
+        decimal retainedBytes = cells * (MaxFinalStateGenerations + 1m) * MaxConcurrentSimulations;
+        if (retainedBytes > MaxRetainedStateBytes)
+        {
+            yield return new ValidationResult("Concurrent retained cell buffers must not exceed MaxRetainedStateBytes.",
+                [nameof(MaxFinalStateGenerations), nameof(MaxConcurrentSimulations), nameof(MaxRetainedStateBytes)]);
+        }
+
+        // CancellationTokenSource uses the runtime timer's unsigned-millisecond range; this is not a policy limit.
+        if (TimeSpan.FromSeconds(BoardLockTimeoutSeconds).TotalMilliseconds > uint.MaxValue - 1L)
+        {
+            yield return new ValidationResult("BoardLockTimeoutSeconds exceeds the runtime timer's supported duration.",
+                [nameof(BoardLockTimeoutSeconds)]);
+        }
+
+        ThreadPool.GetMaxThreads(out int maximumWorkers, out _);
+        if ((long)MaxConcurrentSimulations + Environment.ProcessorCount > maximumWorkers)
+        {
+            yield return new ValidationResult("MaxConcurrentSimulations plus the processor count exceeds the runtime's maximum worker threads.",
+                [nameof(MaxConcurrentSimulations)]);
         }
     }
 }

@@ -38,7 +38,7 @@ builder.Services.AddOptions<GameOfLifeOptions>()
     .Validate(_ => !new NpgsqlConnectionStringBuilder(connectionString).Multiplexing,
         "Multiplexing must be disabled because advisory locks belong to one PostgreSQL session.")
     .Validate(limits => !new NpgsqlConnectionStringBuilder(connectionString).Pooling
-        || new NpgsqlConnectionStringBuilder(connectionString).MaxPoolSize >= limits.MaxConcurrentSimulations + 2,
+        || new NpgsqlConnectionStringBuilder(connectionString).MaxPoolSize >= (long)limits.MaxConcurrentSimulations + 2,
         "Maximum Pool Size must leave at least two connections beyond MaxConcurrentSimulations for other requests.")
     .ValidateOnStart();
 

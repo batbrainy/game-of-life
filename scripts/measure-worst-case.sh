@@ -1,18 +1,14 @@
 #!/bin/sh
 # Measure fresh simulations, different-board concurrency, and same-board lock contention.
-# Usage: scripts/measure-worst-case.sh [base-url] [concurrency]
-# Run against an isolated stack with default size/iteration limits. Concurrency defaults to min(container CPUs, 8).
+# Usage: scripts/measure-worst-case.sh base-url concurrency
+# Run against an isolated stack with default size/iteration limits; pass its configured concurrency explicitly.
 # Timing is observational, not a hard latency assertion. Same-board contention may return 503 after the lock timeout.
 set -eu
 export LC_ALL=C
 base_url=${1:-http://localhost:8080}
-concurrency=${2:-}
-if [ -z "$concurrency" ]; then
-    concurrency=$(cd "$(dirname "$0")/.." && docker compose exec -T api nproc)
-    if [ "$concurrency" -gt 8 ]; then concurrency=8; fi
-fi
-case "$concurrency" in ''|*[!0-9]*) echo 'Concurrency must be an integer from 1 to 16'; exit 1;; esac
-if [ "$concurrency" -lt 1 ] || [ "$concurrency" -gt 16 ]; then echo 'Concurrency must be 1 to 16'; exit 1; fi
+concurrency=${2:?Pass the API MaxConcurrentSimulations setting as the second argument}
+case "$concurrency" in ''|*[!0-9]*) echo 'Concurrency must be a positive integer'; exit 1;; esac
+if [ "$concurrency" -lt 1 ]; then echo 'Concurrency must be positive'; exit 1; fi
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 boards_url=$base_url/api/v1/boards
