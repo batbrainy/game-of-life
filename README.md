@@ -85,6 +85,77 @@ Generation 3 is when repetition was detected. `cycleStartGeneration` is where th
 
 A projection reports `sourceGeneration` because a concurrent mutation can finish after its snapshot was read. Its result is always N steps from that snapshot, even if storage has since advanced.
 
+## Design
+
+### Components and dependencies
+
+Each API instance runs the same components. `GameOfLife.Core` is an in-process library with no HTTP or database dependencies. The arrows below show calls; PostgreSQL is shared across instances.
+
+```mermaid
+flowchart TB
+    client["HTTP client"]
+    subgraph api["GameOfLife.Api instance"]
+        endpoints["BoardEndpoints"]
+        service["BoardService"]
+        repository["NpgsqlBoardRepository"]
+    end
+    core["GameOfLife.Core: Board and Simulation"]
+    database[("PostgreSQL 16")]
+
+    client --> endpoints
+    endpoints -->|"Next / Final"| service
+    endpoints -->|"Upload / Fetch / snapshot"| repository
+    endpoints -->|"N-ahead calculation"| core
+    service -->|"Next / Final calculation"| core
+    service -->|"Locked mutation"| repository
+    repository -->|"Advisory locks and current board rows"| database
+```
+
+`IBoardRepository` provides storage access, and `IBoardMutationSession` owns a mutation's lock and connection. The simulation admission limit applies to Next, N-ahead, and Final per API instance. The PostgreSQL lock separately serializes mutations of the same GUID across all instances.
+
+### Mutation lifecycle
+
+This is the successful path for an Active board. `NpgsqlBoardRepository` keeps one database session open from lock acquisition through release; the calculation runs without an open database transaction.
+
+```mermaid
+sequenceDiagram
+    participant client as HTTP client
+    participant api as API and mutation session
+    participant core as GameOfLife.Core
+    participant database as PostgreSQL
+
+    client->>api: POST Next or Final for board GUID
+    api->>database: Open connection and try advisory lock for GUID
+    database-->>api: Exclusive lock acquired
+    api->>database: SELECT current board on the same session
+    database-->>api: Matrix, generation G, status Active
+    api->>core: Next or FindFinalState from this snapshot
+    core-->>api: Result and number of generations computed
+    api->>database: Atomic UPDATE on the same session
+    database-->>api: Saved matrix, generation, status and metadata
+    api->>database: Release advisory lock
+    database-->>api: Unlock confirmed
+    api->>api: Return connection to pool
+    api-->>client: 200 with persisted result
+```
+
+A competing Next or Final for the same GUID retries acquisition within its deadline, then reads the latest committed state only after obtaining the lock. A different GUID can proceed concurrently. Upload uses a new GUID; Fetch and N-ahead read a committed snapshot without taking the mutation lock. N-ahead calculates in memory and returns directly without an UPDATE.
+
+If acquisition times out, the API returns 503. If Final exhausts its iteration limit, it releases the lock and returns 422 without saving intermediate progress. Terminal checks also happen under the lock: Next returns 409, while Final returns the saved terminal result. A lost session aborts the mutation; it cannot reconnect to write a result computed under the old lock.
+
+### Board lifecycle
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Active: Upload at generation 0
+    Active --> Active: Next
+    Active --> Stable: Final, period 1
+    Active --> Cycle: Final, period greater than 1
+```
+
+Next increments the generation and leaves status Active. Stable and Cycle are terminal for advancement. Their rows remain available to Fetch and N-ahead, and repeated Final calls return the saved result. Projections, failed searches, and rejected mutations leave the stored state unchanged. Final saves the matrix at the repetition-detection generation, along with the cycle start and period; each board retains one current row.
+
 ## Persistence and concurrency
 
 `GameOfLife.Core` contains the immutable Board, Conway rules, and in-memory simulation. It has no HTTP or database dependencies. Each step reads the previous buffer and allocates a separate next buffer. Internally the engine uses bool arrays; the API and persisted JSON matrix use integer 0/1 rows.
