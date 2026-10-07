@@ -60,10 +60,12 @@ public sealed class GameOfLifeOptions : IValidatableObject
         }
 
         // Starting, current and next int matrices, including estimated 64-bit row-array overhead;
-        // a fingerprint row buffer; and 256 bytes per history entry for hex strings and dictionary storage.
+        // a fingerprint JSON buffer; and 256 bytes per history entry for hex strings and dictionary storage.
         // Decimal prevents overflow. This is an estimate, not a total process-memory guarantee.
         decimal matrixBytes = (cells * sizeof(int)) + (32m * MaxRows) + 24;
-        decimal retainedBytes = ((3 * matrixBytes) + MaxColumns + (256m * (MaxFinalStateGenerations + 1m)))
+        // Compact 0/1 JSON has length 2 * cells + 2 * rows + 1, including commas and brackets.
+        decimal fingerprintBytes = (2 * cells) + (2m * MaxRows) + 1;
+        decimal retainedBytes = ((3 * matrixBytes) + fingerprintBytes + (256m * (MaxFinalStateGenerations + 1m)))
             * MaxConcurrentSimulations;
         if (retainedBytes > MaxRetainedStateBytes)
         {

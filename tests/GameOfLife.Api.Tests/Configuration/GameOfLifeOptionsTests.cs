@@ -40,13 +40,13 @@ public sealed class GameOfLifeOptionsTests
     [Theory]
     [InlineData("MaxBoardCells", "1023")]
     [InlineData("MaxSimulationCellSteps", "2047")]
-    [InlineData("MaxRetainedStateBytes", "16231")]
+    [InlineData("MaxRetainedStateBytes", "18312")]
     public void BudgetsAreConfigurableAndInclusive(string loweredBudget, string value)
     {
         (string, string)[] settings = [
             ("MaxRows", "32"), ("MaxColumns", "32"),
             ("MaxGenerationsAhead", "2"), ("MaxFinalStateGenerations", "2"), ("MaxConcurrentSimulations", "1"),
-            ("MaxBoardCells", "1024"), ("MaxSimulationCellSteps", "2048"), ("MaxRetainedStateBytes", "16232"),
+            ("MaxBoardCells", "1024"), ("MaxSimulationCellSteps", "2048"), ("MaxRetainedStateBytes", "18313"),
         ];
         Assert.Empty(Errors(Load(settings)));
         Assert.Contains(Errors(Load([.. settings, (loweredBudget, value)])), error => error.MemberNames.Contains(loweredBudget));
