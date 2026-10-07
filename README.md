@@ -638,9 +638,13 @@ cores and 64 GiB, whose Docker VM had 10 CPUs and 7.7 GiB, so `MaxConcurrentSimu
 | 500, the default | One at a time | 0.67 to 0.76 s |
 | 500, the default | 10 at once | 0.91 to 1.32 s |
 
-At 1000 a request on its own took more than a second, so both limits are 500. While 10 simulations ran, the 503 for a
-request beyond the bound took up to 1.14 s and `/health/live` up to 0.93 s; see
-[Known limitations](#known-limitations).
+At 1000 a request on its own took more than a second, so both limits are 500.
+
+While 10 simulations run, other requests still get a thread straight away, because the API raises the thread pool's
+minimum number of worker threads at startup to the processor count plus `MaxConcurrentSimulations`. Without that, a new
+request could wait for the pool to add a thread: in three runs on 2026-10-06 the 503 for a request beyond the bound
+took up to 0.87 s and `/health/live` up to 0.72 s. With it, in three runs on the same day, the 503 took at most 0.097 s
+and `/health/live` at most 0.034 s.
 
 A run on the same machine on 2026-10-06, made while checking this README, gave medians of 0.688 s for
 `/generations/500` and 0.684 s for `/final` one at a time, and 1.064 s and 0.968 s with 10 at once.
@@ -676,13 +680,6 @@ vary from run to run.
   [Adding a migration](#adding-a-migration).
 - No TLS. The container serves plain HTTP on port 8080, published on 127.0.0.1 only.
 - Computed generations are not cached. Every request computes from the uploaded board.
-- New requests can wait for a thread while `MaxConcurrentSimulations` simulations run. The simulations run on
-  thread-pool threads, and the pool's minimum number of threads is the processor count by default, the same as the
-  default `MaxConcurrentSimulations`. Once its minimum threads are busy, the pool can wait for running work to finish
-  before it adds a thread, so a new request, including one that then gets the 503 and a call to `/health/live`, can
-  wait for a free thread before it is handled. The plan records waits of up to 1.14 s for the 503 and 0.93 s for
-  `/health/live`; in other runs the same requests took 3 to 38 ms. A request that waits until a simulation finishes can
-  find a free permit and get 200 instead of 503.
 - Right after the database restarts, the first requests can get 503. The API's connection pool still holds
   connections to the old server process, and a request that gets one fails with 503 while the broken connection is
   dropped. `scripts/verify-restart.sh` retries a 503 for this reason.

@@ -74,6 +74,19 @@ if (isMigrateCommand)
     }
 }
 
+// Each running simulation keeps a thread-pool thread busy until it ends. By default the pool's minimum number of
+// worker threads is the processor count, the same as the default MaxConcurrentSimulations, and once that many are
+// busy the pool can wait for running work to finish before it adds a thread. Raising the minimum to the bound plus
+// one thread per processor lets other requests, including those answered with 503 and the health checks, get a
+// thread at once.
+int simulationBound = app.Services.GetRequiredService<IOptions<GameOfLifeOptions>>().Value.MaxConcurrentSimulations;
+int neededMinimum = Environment.ProcessorCount + simulationBound;
+ThreadPool.GetMinThreads(out int currentMinimum, out int completionPortMinimum);
+if (currentMinimum < neededMinimum)
+{
+    ThreadPool.SetMinThreads(neededMinimum, completionPortMinimum);
+}
+
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseRateLimiter();

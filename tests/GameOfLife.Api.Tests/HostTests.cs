@@ -1,9 +1,11 @@
 using System.Net;
 
+using GameOfLife.Api.Configuration;
 using GameOfLife.Api.Persistence;
 
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -74,6 +76,56 @@ public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         Assert.IsType<NpgsqlBoardRepository>(first);
         Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void StartupRaisesTheThreadPoolMinimumByTheDefaultSimulationBound()
+    {
+        using var defaultFactory = factory.WithSettings();
+
+        int minimum = MinimumWorkerThreadsAfterStartup(defaultFactory, startingMinimum: Environment.ProcessorCount);
+
+        Assert.Equal(Environment.ProcessorCount + new GameOfLifeOptions().MaxConcurrentSimulations, minimum);
+    }
+
+    [Fact]
+    public void StartupRaisesTheThreadPoolMinimumByAConfiguredSimulationBound()
+    {
+        using var boundedFactory = factory.WithSettings(("GameOfLife:MaxConcurrentSimulations", "3"));
+
+        int minimum = MinimumWorkerThreadsAfterStartup(boundedFactory, startingMinimum: Environment.ProcessorCount);
+
+        Assert.Equal(Environment.ProcessorCount + 3, minimum);
+    }
+
+    [Fact]
+    public void StartupKeepsAHigherThreadPoolMinimum()
+    {
+        using var boundedFactory = factory.WithSettings(("GameOfLife:MaxConcurrentSimulations", "3"));
+        int higherMinimum = Environment.ProcessorCount + 100;
+
+        int minimum = MinimumWorkerThreadsAfterStartup(boundedFactory, startingMinimum: higherMinimum);
+
+        Assert.Equal(higherMinimum, minimum);
+    }
+
+    // The minimum belongs to the whole test process, and other hosts started in it can have raised it already, so it is
+    // set to a known value before the host starts and put back afterwards. hostFactory must be a new factory, so that
+    // its host starts here.
+    private static int MinimumWorkerThreadsAfterStartup(WebApplicationFactory<Program> hostFactory, int startingMinimum)
+    {
+        ThreadPool.GetMinThreads(out int originalMinimum, out int completionPortMinimum);
+        ThreadPool.SetMinThreads(startingMinimum, completionPortMinimum);
+        try
+        {
+            using var client = hostFactory.CreateClient();
+            ThreadPool.GetMinThreads(out int minimumAfterStartup, out _);
+            return minimumAfterStartup;
+        }
+        finally
+        {
+            ThreadPool.SetMinThreads(originalMinimum, completionPortMinimum);
+        }
     }
 
     // Added after the application's own pipeline, so its exception travels back through the
