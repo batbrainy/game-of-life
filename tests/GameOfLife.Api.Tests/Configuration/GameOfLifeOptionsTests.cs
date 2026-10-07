@@ -40,16 +40,27 @@ public sealed class GameOfLifeOptionsTests
     [Theory]
     [InlineData("MaxBoardCells", "1023")]
     [InlineData("MaxSimulationCellSteps", "2047")]
-    [InlineData("MaxRetainedStateBytes", "3071")]
+    [InlineData("MaxRetainedStateBytes", "16231")]
     public void BudgetsAreConfigurableAndInclusive(string loweredBudget, string value)
     {
         (string, string)[] settings = [
             ("MaxRows", "32"), ("MaxColumns", "32"),
             ("MaxGenerationsAhead", "2"), ("MaxFinalStateGenerations", "2"), ("MaxConcurrentSimulations", "1"),
-            ("MaxBoardCells", "1024"), ("MaxSimulationCellSteps", "2048"), ("MaxRetainedStateBytes", "3072"),
+            ("MaxBoardCells", "1024"), ("MaxSimulationCellSteps", "2048"), ("MaxRetainedStateBytes", "16232"),
         ];
         Assert.Empty(Errors(Load(settings)));
         Assert.Contains(Errors(Load([.. settings, (loweredBudget, value)])), error => error.MemberNames.Contains(loweredBudget));
+    }
+
+    [Fact]
+    public void LongSearchBudgetsFingerprintsRatherThanCompleteHistoricalMatrices()
+    {
+        // 3 working 256x256 int matrices plus 10,001 history entries fit comfortably in 4 MiB.
+        var options = Load(("MaxFinalStateGenerations", "10000"), ("MaxConcurrentSimulations", "1"),
+            ("MaxSimulationCellSteps", "655360000"), ("MaxRetainedStateBytes", "4194304"));
+        Assert.Empty(Errors(options));
+        options.MaxRetainedStateBytes = 2 * 1024 * 1024;
+        Assert.Contains(Errors(options), error => error.MemberNames.Contains("MaxRetainedStateBytes"));
     }
 
     [Fact]

@@ -156,7 +156,7 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
     {
         public static readonly Guid HeldId = Guid.NewGuid();
 
-        private static readonly Board Block = Board.FromCells(new bool[,] { { true, true }, { true, true } });
+        private static readonly Board Block = Board.FromMatrix([[1, 1], [1, 1]]);
 
         // Completing one of these does not run the code that waits on it, in the test or in the server, on the
         // completing thread.

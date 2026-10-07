@@ -1,33 +1,20 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+
 namespace GameOfLife.Core;
 
-/// <summary>A grid of live (<see langword="true"/>) and dead cells that cannot change after it is created.</summary>
-public sealed class Board : IEquatable<Board>
+/// <summary>A rectangular 0/1 matrix that cannot change after it is created.</summary>
+public sealed class Board
 {
-    private readonly bool[] _cells;
-    private readonly int _hashCode;
+    private readonly int[][] _cells;
 
-    private Board(int rows, int columns, bool[] cells)
-    {
-        Rows = rows;
-        Columns = columns;
-        _cells = cells;
+    private Board(int[][] cells) => _cells = cells;
 
-        var hash = new HashCode();
-        hash.Add(rows);
-        hash.Add(columns);
-        foreach (bool cell in cells)
-        {
-            hash.Add(cell);
-        }
+    public int Rows => _cells.Length;
 
-        _hashCode = hash.ToHashCode();
-    }
+    public int Columns => _cells[0].Length;
 
-    public int Rows { get; }
-
-    public int Columns { get; }
-
-    public bool this[int row, int column]
+    public int this[int row, int column]
     {
         get
         {
@@ -36,7 +23,7 @@ public sealed class Board : IEquatable<Board>
             ArgumentOutOfRangeException.ThrowIfNegative(column);
             ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(column, Columns);
 
-            return _cells[(row * Columns) + column];
+            return _cells[row][column];
         }
     }
 
@@ -46,73 +33,73 @@ public sealed class Board : IEquatable<Board>
     /// </summary>
     public Board Next()
     {
-        var next = new bool[_cells.Length];
+        var next = new int[Rows][];
         for (int row = 0; row < Rows; row++)
         {
+            next[row] = new int[Columns];
             for (int column = 0; column < Columns; column++)
             {
-                bool isAlive = _cells[(row * Columns) + column];
                 int liveNeighbours = CountLiveNeighbours(row, column);
-                next[(row * Columns) + column] = isAlive ? liveNeighbours is 2 or 3 : liveNeighbours == 3;
+                next[row][column] = liveNeighbours == 3 || (_cells[row][column] == 1 && liveNeighbours == 2) ? 1 : 0;
             }
         }
 
-        return new Board(Rows, Columns, next);
+        return new Board(next);
     }
 
-    /// <summary>Creates a board from a copy of <paramref name="cells"/>, indexed [row, column].</summary>
-    public static Board FromCells(bool[,] cells)
+    /// <summary>Creates a board from a deep copy of a nonempty rectangular 0/1 matrix.</summary>
+    public static Board FromMatrix(int[][] cells)
     {
         ArgumentNullException.ThrowIfNull(cells);
-
-        int rows = cells.GetLength(0);
-        int columns = cells.GetLength(1);
-        if (rows == 0 || columns == 0)
+        if (cells.Length == 0 || cells[0] is null || cells[0].Length == 0)
         {
             throw new ArgumentException("A board needs at least one row and one column.", nameof(cells));
         }
 
-        var copy = new bool[cells.Length];
-        for (int row = 0; row < rows; row++)
+        int columns = cells[0].Length;
+        if ((long)cells.Length * columns > Array.MaxLength)
         {
-            for (int column = 0; column < columns; column++)
+            throw new ArgumentException("The board exceeds the supported cell count.", nameof(cells));
+        }
+
+        foreach (var row in cells)
+        {
+            if (row is null || row.Length != columns || row.Any(cell => cell is not (0 or 1)))
             {
-                copy[(row * columns) + column] = cells[row, column];
+                throw new ArgumentException("A board must be a rectangular matrix of 0 and 1 cells.", nameof(cells));
             }
         }
 
-        return new Board(rows, columns, copy);
+        return new Board(CopyMatrix(cells));
     }
 
-    /// <summary>Returns a copy of the cells, row by row: the cell at (row, column) is at index row * Columns + column.</summary>
-    public bool[] ToCellArray() => _cells.ToArray();
+    /// <summary>Returns a deep copy of the cells, indexed [row][column].</summary>
+    public int[][] ToMatrix() => CopyMatrix(_cells);
 
-    /// <summary>Creates a board from a copy of <paramref name="cells"/>, laid out as <see cref="ToCellArray"/> returns them.</summary>
-    public static Board FromCellArray(int rows, int columns, bool[] cells)
+    /// <summary>SHA-256 of the dimensions (two big-endian int32s) followed by row-major 0/1 bytes.</summary>
+    public string Fingerprint()
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
-        ArgumentNullException.ThrowIfNull(cells);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        Span<byte> dimensions = stackalloc byte[8];
+        BinaryPrimitives.WriteInt32BigEndian(dimensions, Rows);
+        BinaryPrimitives.WriteInt32BigEndian(dimensions[4..], Columns);
+        hash.AppendData(dimensions);
 
-        // Multiplied as longs: as ints, 65,536 x 65,536 wraps around to 0 and would accept an empty array.
-        long cellCount = (long)rows * columns;
-        if (cells.Length != cellCount)
+        var buffer = new byte[Columns];
+        foreach (var row in _cells)
         {
-            throw new ArgumentException($"A {rows}x{columns} board has {cellCount} cells, but {cells.Length} were given.", nameof(cells));
+            for (int column = 0; column < Columns; column++)
+            {
+                buffer[column] = (byte)row[column];
+            }
+
+            hash.AppendData(buffer);
         }
 
-        return new Board(rows, columns, cells.ToArray());
+        return Convert.ToHexString(hash.GetHashAndReset());
     }
 
-    public bool Equals(Board? other) =>
-        other is not null
-        && Rows == other.Rows
-        && Columns == other.Columns
-        && _cells.AsSpan().SequenceEqual(other._cells);
-
-    public override bool Equals(object? obj) => Equals(obj as Board);
-
-    public override int GetHashCode() => _hashCode;
+    private static int[][] CopyMatrix(int[][] cells) => cells.Select(row => row.ToArray()).ToArray();
 
     private int CountLiveNeighbours(int row, int column)
     {
@@ -123,9 +110,9 @@ public sealed class Board : IEquatable<Board>
             {
                 bool isTheCellItself = neighbourRow == row && neighbourColumn == column;
                 bool isOutsideTheGrid = neighbourRow < 0 || neighbourRow >= Rows || neighbourColumn < 0 || neighbourColumn >= Columns;
-                if (!isTheCellItself && !isOutsideTheGrid && _cells[(neighbourRow * Columns) + neighbourColumn])
+                if (!isTheCellItself && !isOutsideTheGrid)
                 {
-                    count++;
+                    count += _cells[neighbourRow][neighbourColumn];
                 }
             }
         }

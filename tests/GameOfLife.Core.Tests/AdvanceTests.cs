@@ -8,10 +8,10 @@ public sealed class AdvanceTests
     [Fact]
     public void ZeroGenerationsReturnsTheBoardAndOneReturnsItsNextGeneration()
     {
-        var board = Board.FromCells(Pattern.Parse("#.#/.##/#.."));
+        var board = Board.FromMatrix(Pattern.Parse("#.#/.##/#.."));
 
         Assert.Equal(board, Simulation.Advance(board, 0, CancellationToken.None));
-        Assert.Equal(board.Next(), Simulation.Advance(board, 1, CancellationToken.None));
+        Assert.Equal(Pattern.Format(board.Next()), Pattern.Format(Simulation.Advance(board, 1, CancellationToken.None)));
     }
 
     [Theory]
@@ -23,7 +23,7 @@ public sealed class AdvanceTests
     [InlineData(101, HorizontalBlinker)]
     public void BlinkerIsBackToItsStartAfterEvenCountsAndFlippedAfterOddCounts(int generations, string expected)
     {
-        var blinker = Board.FromCells(Pattern.Parse(VerticalBlinker));
+        var blinker = Board.FromMatrix(Pattern.Parse(VerticalBlinker));
 
         var advanced = Simulation.Advance(blinker, generations, CancellationToken.None);
 
@@ -44,7 +44,7 @@ public sealed class AdvanceTests
     [Fact]
     public void NegativeCountThrows()
     {
-        var board = Board.FromCells(Pattern.Parse(VerticalBlinker));
+        var board = Board.FromMatrix(Pattern.Parse(VerticalBlinker));
 
         var exception = Assert.Throws<ArgumentOutOfRangeException>(() => Simulation.Advance(board, -1, CancellationToken.None));
         Assert.Equal("generations", exception.ParamName);
@@ -53,7 +53,7 @@ public sealed class AdvanceTests
     [Fact]
     public void AlreadyCancelledTokenThrows()
     {
-        var board = Board.FromCells(Pattern.Parse(VerticalBlinker));
+        var board = Board.FromMatrix(Pattern.Parse(VerticalBlinker));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 

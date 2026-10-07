@@ -27,22 +27,22 @@ public sealed class NextGenerationTests
     [InlineData(8, true, false)]
     public void CentreCellWithKLiveNeighboursFollowsTheRules(int liveNeighbours, bool startsAlive, bool aliveAfterwards)
     {
-        var cells = new bool[3, 3];
-        cells[1, 1] = startsAlive;
+        var cells = Enumerable.Range(0, 3).Select(_ => new int[3]).ToArray();
+        cells[1][1] = startsAlive ? 1 : 0;
         foreach (var (row, column) in CentreNeighbours.Take(liveNeighbours))
         {
-            cells[row, column] = true;
+            cells[row][column] = 1;
         }
 
-        var next = Board.FromCells(cells).Next();
+        var next = Board.FromMatrix(cells).Next();
 
-        Assert.Equal(aliveAfterwards, next[1, 1]);
+        Assert.Equal(aliveAfterwards ? 1 : 0, next[1, 1]);
     }
 
     [Fact]
     public void AllAliveThreeByThreeBecomesTheFourCornersOnly()
     {
-        var next = Board.FromCells(Pattern.Parse("###/###/###")).Next();
+        var next = Board.FromMatrix(Pattern.Parse("###/###/###")).Next();
 
         Assert.Equal("#.#/.../#.#", Pattern.Format(next));
     }
@@ -50,7 +50,7 @@ public sealed class NextGenerationTests
     [Fact]
     public void BlockOnAFourByFourBoardIsUnchanged()
     {
-        var next = Board.FromCells(Pattern.Parse("..../.##./.##./....")).Next();
+        var next = Board.FromMatrix(Pattern.Parse("..../.##./.##./....")).Next();
 
         Assert.Equal("..../.##./.##./....", Pattern.Format(next));
     }
@@ -58,7 +58,7 @@ public sealed class NextGenerationTests
     [Fact]
     public void VerticalBlinkerBecomesHorizontalAndBackAgain()
     {
-        var horizontal = Board.FromCells(Pattern.Parse(".#./.#./.#.")).Next();
+        var horizontal = Board.FromMatrix(Pattern.Parse(".#./.#./.#.")).Next();
 
         Assert.Equal(".../###/...", Pattern.Format(horizontal));
         Assert.Equal(".#./.#./.#.", Pattern.Format(horizontal.Next()));
@@ -80,7 +80,7 @@ public sealed class NextGenerationTests
     [InlineData("###", ".#.")]
     public void PositionsOutsideTheGridCountAsDead(string pattern, string expected)
     {
-        var next = Board.FromCells(Pattern.Parse(pattern)).Next();
+        var next = Board.FromMatrix(Pattern.Parse(pattern)).Next();
 
         Assert.Equal(expected, Pattern.Format(next));
     }
@@ -88,7 +88,7 @@ public sealed class NextGenerationTests
     [Fact]
     public void BoardNextWasCalledOnIsUnchanged()
     {
-        var board = Board.FromCells(Pattern.Parse(".#./.#./.#."));
+        var board = Board.FromMatrix(Pattern.Parse(".#./.#./.#."));
 
         board.Next();
 
@@ -97,12 +97,12 @@ public sealed class NextGenerationTests
 
     private static Board WithLiveCells(int rows, int columns, params (int Row, int Column)[] liveCells)
     {
-        var cells = new bool[rows, columns];
+        var cells = Enumerable.Range(0, rows).Select(_ => new int[columns]).ToArray();
         foreach (var (row, column) in liveCells)
         {
-            cells[row, column] = true;
+            cells[row][column] = 1;
         }
 
-        return Board.FromCells(cells);
+        return Board.FromMatrix(cells);
     }
 }

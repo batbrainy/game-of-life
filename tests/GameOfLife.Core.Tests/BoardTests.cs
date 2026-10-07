@@ -2,43 +2,40 @@ namespace GameOfLife.Core.Tests;
 
 public sealed class BoardTests
 {
-    [Fact]
-    public void TwoByThreeBoardReportsItsDimensionsAndCells()
-    {
-        var board = Board.FromCells(Pattern.Parse("#.#/.##"));
-
-        Assert.Equal(2, board.Rows);
-        Assert.Equal(3, board.Columns);
-        Assert.Equal("#.#/.##", Pattern.Format(board));
-    }
-
     [Theory]
     [InlineData("#")]
     [InlineData(".")]
+    [InlineData("#.#/.##")]
     [InlineData("#../.#./..#")]
-    [InlineData(".../.../..#")]
-    [InlineData("###/###/##.")]
-    public void OneByOneAndThreeByThreeBoardsReadBackCorrectly(string pattern)
+    public void MatrixPreservesDimensionsAndCellOrder(string pattern)
     {
-        var board = Board.FromCells(Pattern.Parse(pattern));
+        var cells = Pattern.Parse(pattern);
+        var board = Board.FromMatrix(cells);
 
+        Assert.Equal(cells.Length, board.Rows);
+        Assert.Equal(cells[0].Length, board.Columns);
         Assert.Equal(pattern, Pattern.Format(board));
+        Assert.Equal(cells, board.ToMatrix());
     }
 
     [Fact]
-    public void FromCellsRejectsNull()
+    public void FromMatrixRejectsNull() => Assert.Throws<ArgumentNullException>(() => Board.FromMatrix(null!));
+
+    public static TheoryData<int[][]> InvalidMatrices => new()
     {
-        Assert.Throws<ArgumentNullException>(() => Board.FromCells(null!));
-    }
+        Array.Empty<int[]>(),
+        new int[][] { [] },
+        new int[][] { null! },
+        new int[][] { [1], null! },
+        new int[][] { [0], [0, 1] },
+        new int[][] { [0, 2] },
+        new int[][] { [-1] },
+    };
 
     [Theory]
-    [InlineData(0, 3)]
-    [InlineData(3, 0)]
-    [InlineData(0, 0)]
-    public void FromCellsRejectsZeroRowsOrColumns(int rows, int columns)
-    {
-        Assert.Throws<ArgumentException>(() => Board.FromCells(new bool[rows, columns]));
-    }
+    [MemberData(nameof(InvalidMatrices))]
+    public void FromMatrixRejectsInvalidShapeOrValues(int[][] cells) =>
+        Assert.Throws<ArgumentException>(() => Board.FromMatrix(cells));
 
     [Theory]
     [InlineData(-1, 0, "row")]
@@ -47,63 +44,31 @@ public sealed class BoardTests
     [InlineData(0, 3, "column")]
     public void ReadingOutsideTheGridThrows(int row, int column, string parameter)
     {
-        var board = Board.FromCells(Pattern.Parse("#.#/.##"));
+        var board = Board.FromMatrix(Pattern.Parse("#.#/.##"));
 
         var exception = Assert.Throws<ArgumentOutOfRangeException>(() => board[row, column]);
         Assert.Equal(parameter, exception.ParamName);
     }
 
     [Fact]
-    public void BoardsFromEqualCellsAreEqualAndHaveEqualHashCodes()
+    public void SourceAndExportedMatricesCannotMutateTheBoardOrItsNextGeneration()
     {
-        var first = Board.FromCells(Pattern.Parse("#../.#./..#"));
-        var second = Board.FromCells(Pattern.Parse("#../.#./..#"));
+        var cells = Pattern.Parse(".#./.#./.#.");
+        var board = Board.FromMatrix(cells);
+        var fingerprint = board.Fingerprint();
+        var next = board.Next();
 
-        Assert.True(first.Equals(second));
-        Assert.True(first.Equals((object)second));
-        Assert.Equal(first.GetHashCode(), second.GetHashCode());
-    }
+        cells[0][1] = 0;
+        cells[1] = [1, 1, 1];
+        var exported = board.ToMatrix();
+        exported[2][1] = 0;
+        exported[0] = [1, 1, 1];
+        var nextExported = next.ToMatrix();
+        nextExported[1][0] = 0;
 
-    [Theory]
-    [InlineData("#.#/.##", "#.#/.#.")]
-    [InlineData("#../.#./..#", "#../.#./...")]
-    [InlineData("#.#/.##", "#./#./##")]
-    public void BoardsDifferingInOneCellOrInShapeAreNotEqual(string pattern, string otherPattern)
-    {
-        var board = Board.FromCells(Pattern.Parse(pattern));
-        var other = Board.FromCells(Pattern.Parse(otherPattern));
-
-        Assert.False(board.Equals(other));
-        Assert.False(board.Equals((object)other));
-    }
-
-    [Fact]
-    public void BoardIsNotEqualToNull()
-    {
-        var board = Board.FromCells(Pattern.Parse("#"));
-
-        Assert.False(board.Equals(null));
-        Assert.False(board.Equals((object?)null));
-    }
-
-    [Fact]
-    public void ChangingTheSourceArrayDoesNotChangeTheBoard()
-    {
-        var cells = Pattern.Parse("#.#/.##");
-        var board = Board.FromCells(cells);
-
-        cells[0, 0] = false;
-        cells[0, 1] = true;
-
-        Assert.Equal("#.#/.##", Pattern.Format(board));
-    }
-
-    [Fact]
-    public void VerticalBlinkerGivesItsCellsRowByRow()
-    {
-        var board = Board.FromCells(Pattern.Parse(".#./.#./.#."));
-
-        Assert.Equal<bool>([false, true, false, false, true, false, false, true, false], board.ToCellArray());
+        Assert.Equal(".#./.#./.#.", Pattern.Format(board));
+        Assert.Equal(".../###/...", Pattern.Format(next));
+        Assert.Equal(fingerprint, board.Fingerprint());
     }
 
     [Theory]
@@ -112,76 +77,36 @@ public sealed class BoardTests
     [InlineData(8, 8)]
     [InlineData(5, 7)]
     [InlineData(16, 1)]
-    public void BoardRebuiltFromItsCellArrayEqualsTheOriginal(int rows, int columns)
+    public void RandomMatrixRoundTripPreservesEveryCell(int rows, int columns)
     {
-        // A fixed seed gives the same "random" cells on every run.
         var random = new Random(42);
-        var cells = new bool[rows, columns];
-        for (int row = 0; row < rows; row++)
-        {
-            for (int column = 0; column < columns; column++)
-            {
-                cells[row, column] = random.Next(2) == 1;
-            }
-        }
+        var cells = Enumerable.Range(0, rows)
+            .Select(_ => Enumerable.Range(0, columns).Select(_ => random.Next(2)).ToArray()).ToArray();
+        var board = Board.FromMatrix(cells);
+        var rebuilt = Board.FromMatrix(board.ToMatrix());
 
-        var board = Board.FromCells(cells);
-
-        var rebuilt = Board.FromCellArray(rows, columns, board.ToCellArray());
-
-        Assert.Equal(Pattern.Format(board), Pattern.Format(rebuilt));
-        Assert.Equal(board, rebuilt);
-    }
-
-    [Theory]
-    [InlineData(3, 3, 8)]
-    [InlineData(3, 3, 10)]
-    [InlineData(2, 3, 0)]
-    [InlineData(65_536, 65_536, 0)]
-    public void FromCellArrayRejectsAWrongLength(int rows, int columns, int length)
-    {
-        var exception = Assert.Throws<ArgumentException>(() => Board.FromCellArray(rows, columns, new bool[length]));
-        Assert.Equal("cells", exception.ParamName);
-    }
-
-    [Theory]
-    [InlineData(0, 3, "rows")]
-    [InlineData(-1, 3, "rows")]
-    [InlineData(3, 0, "columns")]
-    [InlineData(3, -1, "columns")]
-    public void FromCellArrayRejectsADimensionBelowOne(int rows, int columns, string parameter)
-    {
-        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => Board.FromCellArray(rows, columns, new bool[9]));
-        Assert.Equal(parameter, exception.ParamName);
+        Assert.Equal(cells, rebuilt.ToMatrix());
     }
 
     [Fact]
-    public void FromCellArrayRejectsNull()
+    public void CellCountValidationDoesNotOverflow()
     {
-        Assert.Throws<ArgumentNullException>(() => Board.FromCellArray(3, 3, null!));
+        // Shared rows keep this invalid 2^32-cell input small enough to test without allocating the grid.
+        var cells = Enumerable.Repeat(new int[65_536], 65_536).ToArray();
+
+        Assert.Throws<ArgumentException>(() => Board.FromMatrix(cells));
     }
 
     [Fact]
-    public void ChangingTheArrayReturnedByToCellArrayDoesNotChangeTheBoard()
+    public void RepeatedRowReferencesAreCopiedIndependently()
     {
-        var board = Board.FromCells(Pattern.Parse("#.#/.##"));
+        int[] row = [0, 1];
+        var board = Board.FromMatrix([row, row]);
+        var exported = board.ToMatrix();
+        exported[0][0] = 1;
+        row[1] = 0;
 
-        bool[] cells = board.ToCellArray();
-        cells[0] = false;
-        cells[1] = true;
-
-        Assert.Equal("#.#/.##", Pattern.Format(board));
-    }
-
-    [Fact]
-    public void ChangingTheArrayPassedToFromCellArrayDoesNotChangeTheBoard()
-    {
-        bool[] cells = [true, false, true, false, true, true];
-        var board = Board.FromCellArray(2, 3, cells);
-
-        cells[0] = false;
-        cells[1] = true;
-
-        Assert.Equal("#.#/.##", Pattern.Format(board));
+        Assert.Equal(0, exported[1][0]);
+        Assert.Equal(".#/.#", Pattern.Format(board));
     }
 }

@@ -16,7 +16,7 @@ namespace GameOfLife.Api.Tests.Persistence;
 public sealed class BoardMutationTests(PostgresFixture postgres)
 {
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(3);
-    private static readonly Board Blinker = Board.FromCells(new bool[,] { { false, true, false }, { false, true, false }, { false, true, false } });
+    private static readonly Board Blinker = Board.FromMatrix([[0, 1, 0], [0, 1, 0], [0, 1, 0]]);
 
     [Fact]
     public async Task SameGuidSerializesAcrossPoolsButAnotherGuidProceeds()
@@ -89,11 +89,11 @@ public sealed class BoardMutationTests(PostgresFixture postgres)
             await Assert.ThrowsAsync<PostgresException>(() => held.SaveAsync(Blinker.Next(), 1, BoardStatus.Cycle, null, null, CancellationToken.None));
         }
 
-        Assert.Equal(original, await repository.FindAsync(id, CancellationToken.None));
+        AssertSameState(original, await repository.FindAsync(id, CancellationToken.None));
         await using var next = await repository.LockAsync(id, WaitLimit, CancellationToken.None);
         var saved = await next.SaveAsync(Blinker.Next(), 1, BoardStatus.Active, null, null, CancellationToken.None);
         Assert.Equal(1, saved.Generation);
-        Assert.Equal(Blinker.Next(), saved.Board);
+        Assert.Equal(Blinker.Next().ToMatrix(), saved.Board.ToMatrix());
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class BoardMutationTests(PostgresFixture postgres)
         var saved = await Repository(adminPool).FindAsync(id, CancellationToken.None);
         Assert.NotNull(saved);
         Assert.Equal(1, saved.Generation);
-        Assert.Equal(Blinker.Next(), saved.Board);
+        Assert.Equal(Blinker.Next().ToMatrix(), saved.Board.ToMatrix());
     }
 
     [Fact]
@@ -218,7 +218,7 @@ public sealed class BoardMutationTests(PostgresFixture postgres)
         var before = await Repository(pool).FindAsync(id, CancellationToken.None);
         using var again = await client.PostAsync($"/api/v1/boards/{id}/final", null);
         again.EnsureSuccessStatusCode();
-        Assert.Equal(before, await Repository(pool).FindAsync(id, CancellationToken.None));
+        AssertSameState(before, await Repository(pool).FindAsync(id, CancellationToken.None));
         var activeId = await TestBoards.UploadAsync(client, "[[1]]");
         await using var command = pool.CreateCommand("UPDATE boards SET generation = 9223372036854775807 WHERE id = $1");
         command.Parameters.AddWithValue(activeId);
@@ -258,12 +258,27 @@ public sealed class BoardMutationTests(PostgresFixture postgres)
             Assert.Equal(long.MaxValue, after.Generation);
             Assert.Equal(generation, after.CycleStartGeneration);
             Assert.Equal(BoardStatus.Stable, after.Status);
-            Assert.Equal(before?.Board, after.Board);
+            Assert.Equal(before?.Board.ToMatrix(), after.Board.ToMatrix());
         }
         else
         {
-            Assert.Equal(before, after);
+            AssertSameState(before, after);
         }
+    }
+
+    private static void AssertSameState(StoredBoard? expected, StoredBoard? actual)
+    {
+        Assert.NotNull(expected);
+        Assert.NotNull(actual);
+        Assert.Equal(expected.Board.ToMatrix(), actual.Board.ToMatrix());
+        Assert.Equal(expected.Id, actual.Id);
+        Assert.Equal(expected.Generation, actual.Generation);
+        Assert.Equal(expected.Status, actual.Status);
+        Assert.Equal(expected.CreatedAt, actual.CreatedAt);
+        Assert.Equal(expected.UpdatedAt, actual.UpdatedAt);
+        Assert.Equal(expected.CompletedAt, actual.CompletedAt);
+        Assert.Equal(expected.CycleStartGeneration, actual.CycleStartGeneration);
+        Assert.Equal(expected.Period, actual.Period);
     }
 
     private static NpgsqlBoardRepository Repository(NpgsqlDataSource source) => new(source, NullLogger<NpgsqlBoardRepository>.Instance);

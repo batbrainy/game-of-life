@@ -49,8 +49,8 @@ public sealed class FinalStateTests
         Assert.Equal(generation, result.CycleStartGeneration);
         Assert.Equal(period, result.Period);
         Assert.Equal(generation + period, result.GenerationsComputed);
-        Assert.Equal(StepForward(board, generation), result.Board);
-        Assert.Equal(endsEmpty, result.Board.ToCellArray().All(isAlive => !isAlive));
+        Assert.Equal(Pattern.Format(StepForward(board, generation)), Pattern.Format(result.Board));
+        Assert.Equal(endsEmpty, result.Board.ToMatrix().All(row => row.All(cell => cell == 0)));
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public sealed class FinalStateTests
         var block = Pattern.Place(10, 10, 8, 8, "##/##");
 
         Assert.Null(Simulation.FindFinalState(glider, 31, CancellationToken.None));
-        Assert.Equal(new FinalState(block, 31, 1), Simulation.FindFinalState(glider, 32, CancellationToken.None));
+        AssertFinalState(new FinalState(block, 31, 1), Simulation.FindFinalState(glider, 32, CancellationToken.None));
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class FinalStateTests
     [InlineData(-1)]
     public void LimitBelowOneThrows(int maxGenerations)
     {
-        var board = Board.FromCells(Pattern.Parse("#"));
+        var board = Board.FromMatrix(Pattern.Parse("#"));
 
         var exception = Assert.Throws<ArgumentOutOfRangeException>(
             () => Simulation.FindFinalState(board, maxGenerations, CancellationToken.None));
@@ -86,7 +86,7 @@ public sealed class FinalStateTests
     [Fact]
     public void AlreadyCancelledTokenThrows()
     {
-        var board = Board.FromCells(Pattern.Parse("#/#/#"));
+        var board = Board.FromMatrix(Pattern.Parse("#/#/#"));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -102,25 +102,41 @@ public sealed class FinalStateTests
 
         for (int boardNumber = 0; boardNumber < 200; boardNumber++)
         {
-            var cells = new bool[random.Next(1, 7), random.Next(1, 7)];
-            for (int row = 0; row < cells.GetLength(0); row++)
+            int rows = random.Next(1, 7);
+            int columns = random.Next(1, 7);
+            var cells = Enumerable.Range(0, rows).Select(_ => new int[columns]).ToArray();
+            for (int row = 0; row < cells.Length; row++)
             {
-                for (int column = 0; column < cells.GetLength(1); column++)
+                for (int column = 0; column < cells[row].Length; column++)
                 {
-                    cells[row, column] = random.Next(2) == 1;
+                    cells[row][column] = random.Next(2);
                 }
             }
 
-            var board = Board.FromCells(cells);
+            var board = Board.FromMatrix(cells);
             // Limits from 1 to 30 stop some searches before a repeat, so both outcomes get compared.
             int maxGenerations = random.Next(1, 31);
 
             var expected = BruteForceFinalState(board, maxGenerations);
-            Assert.Equal(expected, Simulation.FindFinalState(board, maxGenerations, CancellationToken.None));
+            AssertFinalState(expected, Simulation.FindFinalState(board, maxGenerations, CancellationToken.None));
             stoppedAtTheLimit += expected is null ? 1 : 0;
         }
 
         Assert.InRange(stoppedAtTheLimit, 1, 199);
+    }
+
+    private static void AssertFinalState(FinalState? expected, FinalState? actual)
+    {
+        if (expected is null)
+        {
+            Assert.Null(actual);
+            return;
+        }
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected.CycleStartGeneration, actual.CycleStartGeneration);
+        Assert.Equal(expected.Period, actual.Period);
+        Assert.Equal(Pattern.Format(expected.Board), Pattern.Format(actual.Board));
     }
 
     private static Board StepForward(Board board, int generations)
@@ -143,7 +159,7 @@ public sealed class FinalStateTests
             var next = states[^1].Next();
             for (int earlier = 0; earlier < states.Count; earlier++)
             {
-                if (states[earlier].Equals(next))
+                if (Pattern.Format(states[earlier]) == Pattern.Format(next))
                 {
                     return new FinalState(next, earlier, generation - earlier);
                 }

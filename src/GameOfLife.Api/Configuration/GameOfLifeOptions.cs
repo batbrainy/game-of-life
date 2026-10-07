@@ -59,12 +59,15 @@ public sealed class GameOfLifeOptions : IValidatableObject
                 [nameof(MaxGenerationsAhead), nameof(MaxFinalStateGenerations), nameof(MaxSimulationCellSteps)]);
         }
 
-        // Final retains the starting board plus each computed board, with one byte per bool cell.
-        // Decimal prevents overflow when large settings are validated. Conversion/object/runtime overhead is extra.
-        decimal retainedBytes = cells * (MaxFinalStateGenerations + 1m) * MaxConcurrentSimulations;
+        // Starting, current and next int matrices, including estimated 64-bit row-array overhead;
+        // a fingerprint row buffer; and 256 bytes per history entry for hex strings and dictionary storage.
+        // Decimal prevents overflow. This is an estimate, not a total process-memory guarantee.
+        decimal matrixBytes = (cells * sizeof(int)) + (32m * MaxRows) + 24;
+        decimal retainedBytes = ((3 * matrixBytes) + MaxColumns + (256m * (MaxFinalStateGenerations + 1m)))
+            * MaxConcurrentSimulations;
         if (retainedBytes > MaxRetainedStateBytes)
         {
-            yield return new ValidationResult("Concurrent retained cell buffers must not exceed MaxRetainedStateBytes.",
+            yield return new ValidationResult("Concurrent simulation matrices and fingerprint history must not exceed MaxRetainedStateBytes.",
                 [nameof(MaxFinalStateGenerations), nameof(MaxConcurrentSimulations), nameof(MaxRetainedStateBytes)]);
         }
 
