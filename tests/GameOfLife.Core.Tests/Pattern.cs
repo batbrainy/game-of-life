@@ -4,10 +4,10 @@ namespace GameOfLife.Core.Tests;
 // "#.#/.##" is two rows of three cells.
 internal static class Pattern
 {
-    public static bool[,] Parse(string pattern)
+    public static int[][] Parse(string pattern)
     {
         string[] rows = pattern.Split('/');
-        var cells = new bool[rows.Length, rows[0].Length];
+        var cells = new int[rows.Length][];
         for (int row = 0; row < rows.Length; row++)
         {
             if (rows[row].Length != rows[0].Length)
@@ -15,12 +15,13 @@ internal static class Pattern
                 throw new ArgumentException($"Row {row} of \"{pattern}\" differs in length from row 0.", nameof(pattern));
             }
 
+            cells[row] = new int[rows[row].Length];
             for (int column = 0; column < rows[row].Length; column++)
             {
-                cells[row, column] = rows[row][column] switch
+                cells[row][column] = rows[row][column] switch
                 {
-                    '#' => true,
-                    '.' => false,
+                    '#' => 1,
+                    '.' => 0,
                     _ => throw new ArgumentException($"\"{pattern}\" contains '{rows[row][column]}'.", nameof(pattern)),
                 };
             }
@@ -33,16 +34,16 @@ internal static class Pattern
     public static Board Place(int rows, int columns, int top, int left, string pattern)
     {
         var shape = Parse(pattern);
-        var cells = new bool[rows, columns];
-        for (int row = 0; row < shape.GetLength(0); row++)
+        var cells = Enumerable.Range(0, rows).Select(_ => new int[columns]).ToArray();
+        for (int row = 0; row < shape.Length; row++)
         {
-            for (int column = 0; column < shape.GetLength(1); column++)
+            for (int column = 0; column < shape[row].Length; column++)
             {
-                cells[top + row, left + column] = shape[row, column];
+                cells[top + row][left + column] = shape[row][column];
             }
         }
 
-        return Board.FromCells(cells);
+        return Board.FromMatrix(cells);
     }
 
     public static string Format(Board board)
@@ -53,7 +54,7 @@ internal static class Pattern
             var line = new char[board.Columns];
             for (int column = 0; column < board.Columns; column++)
             {
-                line[column] = board[row, column] ? '#' : '.';
+                line[column] = board[row, column] == 1 ? '#' : '.';
             }
 
             rows[row] = new string(line);

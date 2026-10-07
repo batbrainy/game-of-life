@@ -39,7 +39,7 @@ public sealed class BoardsTableTests(PostgresFixture postgres)
         await runner.ApplyAsync(scripts, CancellationToken.None);
         var state = await new NpgsqlBoardRepository(source, NullLogger<NpgsqlBoardRepository>.Instance).FindAsync(id, CancellationToken.None);
         Assert.NotNull(state);
-        Assert.Equal(Board.FromCellArray(rows, columns, cells), state.Board);
+        Assert.Equal(Enumerable.Range(0, rows).Select(row => cells.Skip(row * columns).Take(columns).Select(cell => cell ? 1 : 0).ToArray()).ToArray(), state.Board.ToMatrix());
         Assert.Equal(created, state.CreatedAt);
         Assert.Equal(created, state.UpdatedAt);
         Assert.Equal(0, state.Generation);
@@ -59,7 +59,7 @@ public sealed class BoardsTableTests(PostgresFixture postgres)
     {
         await using var source = NpgsqlDataSource.Create(await postgres.CreateMigratedDatabaseAsync());
         var repository = new NpgsqlBoardRepository(source, NullLogger<NpgsqlBoardRepository>.Instance);
-        await repository.AddAsync(Guid.NewGuid(), Board.FromCells(new bool[,] { { true } }), CancellationToken.None);
+        await repository.AddAsync(Guid.NewGuid(), Board.FromMatrix([[1]]), CancellationToken.None);
         await using var command = source.CreateCommand(sql);
         var error = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
         Assert.Equal(PostgresErrorCodes.CheckViolation, error.SqlState);

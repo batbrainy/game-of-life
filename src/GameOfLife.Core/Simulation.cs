@@ -33,7 +33,9 @@ public static class Simulation
         ArgumentNullException.ThrowIfNull(board);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxGenerations, 1);
 
-        var firstSeenAt = new Dictionary<Board, int> { [board] = 0 };
+        cancellationToken.ThrowIfCancellationRequested();
+        // Only fingerprints are retained. SHA-256 matching has negligible collision risk, not exact equality.
+        var firstSeenAt = new Dictionary<string, int>(StringComparer.Ordinal) { [board.Fingerprint()] = 0 };
         var current = board;
         for (int step = 0; step < maxGenerations; step++)
         {
@@ -41,12 +43,13 @@ public static class Simulation
             cancellationToken.ThrowIfCancellationRequested();
             current = current.Next();
 
-            if (firstSeenAt.TryGetValue(current, out int cycleStart))
+            var fingerprint = current.Fingerprint();
+            if (firstSeenAt.TryGetValue(fingerprint, out int cycleStart))
             {
                 return new FinalState(current, cycleStart, generation - cycleStart);
             }
 
-            firstSeenAt.Add(current, generation);
+            firstSeenAt.Add(fingerprint, generation);
         }
 
         return null;

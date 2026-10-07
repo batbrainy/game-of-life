@@ -29,7 +29,7 @@ public sealed class NpgsqlBoardRepositoryTests(PostgresFixture postgres)
         var found = await repository.FindAsync(id, CancellationToken.None);
 
         Assert.NotNull(found);
-        Assert.Equal(board, found.Board);
+        Assert.Equal(board.ToMatrix(), found.Board.ToMatrix());
         Assert.Equal(0, found.Generation);
         Assert.Equal(BoardStatus.Active, found.Status);
     }
@@ -63,7 +63,7 @@ public sealed class NpgsqlBoardRepositoryTests(PostgresFixture postgres)
             Assert.Equal(board.Columns, matrix[row].Length);
             for (int column = 0; column < board.Columns; column++)
             {
-                Assert.Equal(board[row, column] ? 1 : 0, matrix[row][column]);
+                Assert.Equal(board[row, column], matrix[row][column]);
             }
         }
     }
@@ -132,12 +132,8 @@ public sealed class NpgsqlBoardRepositoryTests(PostgresFixture postgres)
     {
         // A fixed seed gives the same "random" cells on every run.
         var random = new Random(42);
-        bool[] cells = new bool[rows * columns];
-        for (int index = 0; index < cells.Length; index++)
-        {
-            cells[index] = random.Next(2) == 1;
-        }
-
-        return Board.FromCellArray(rows, columns, cells);
+        var cells = Enumerable.Range(0, rows)
+            .Select(_ => Enumerable.Range(0, columns).Select(_ => random.Next(2)).ToArray()).ToArray();
+        return Board.FromMatrix(cells);
     }
 }

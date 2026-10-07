@@ -198,7 +198,7 @@ Projections, failed searches, and rejected mutations leave storage unchanged. Fi
 
 ## Persistence and concurrency
 
-PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, timestamps, and optional cycle start and period. No history or hashes are persisted. `BoardMatrixMapper` validates and converts matrices at upload and load boundaries; the repository owns JSON serialization. Database constraints check outer JSON shape, dimensions, generation, and terminal metadata. Inner rows and cell values are checked when loading.
+PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, timestamps, and optional cycle start and period. No history or hashes are persisted. `BoardMatrixValidator` validates matrices at upload and load boundaries; the repository owns JSON serialization. Database constraints check outer JSON shape, dimensions, generation, and terminal metadata. Inner rows and cell values are checked when loading.
 
 Next and Final share a session advisory lock. The mutation session owns the same connection through acquisition, read, atomic save, and explicit unlock before pool reuse, including failure and cancellation paths. Calculation holds no database transaction. Upload, Fetch, and projection do not take this lock.
 
@@ -206,7 +206,9 @@ The deterministic key uses SHA-256 over a fixed namespace and canonical GUID, wi
 
 Multiplexing is rejected because locks require session affinity. With pooling enabled, startup requires at least two more pool slots than the configured simulation concurrency, leaving headroom for other requests. This headroom is not a separate reserved pool. Direct SQL writers must follow the same advisory-lock protocol; advisory locks do not constrain unrelated SQL automatically.
 
-The core uses immutable bool buffers. Final keeps a dictionary of boards and first-seen steps for its current run; full matrix equality prevents false cycle detection from hash collisions. Limit exhaustion returns 422 without saving intermediate progress.
+The core owns a nested `int[][]` matrix of 0 and 1, the same representation used by HTTP and PostgreSQL JSONB. Import and export make deep copies so callers cannot mutate a board; calculation creates a new owned matrix. There is no boolean conversion or flat-array reshaping.
+
+Final keeps only SHA-256 fingerprints mapped to first-seen steps, rather than retaining every board. Each fingerprint hashes two big-endian 32-bit dimensions followed by one byte per cell in row-major order. Matching fingerprints have negligible collision risk, but are not mathematically exact board equality. The previous 32-bit dictionary hash was correct because it also checked full equality; this change simplifies storage and reduces retained history. Starting, current and next matrices are sufficient for calculation; the repeated current matrix supplies the cycle result. Limit exhaustion returns 422 without saving intermediate progress. PostgreSQL still stores the full current matrix and metadata; no schema migration is needed for this cleanup.
 
 ### Upgrade an existing database
 
@@ -243,7 +245,7 @@ Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.A
 
 | Setting | Default | Validation |
 |---|---|---|
-| MaxRows | 256 | Positive; configured dimensions must fit MaxBoardCells and the engine array |
+| MaxRows | 256 | Positive; configured dimensions must fit MaxBoardCells and the supported cell count |
 | MaxColumns | 256 | Positive; same combined dimension checks |
 | MaxGenerationsAhead | 500 | Positive; requests accept N from 0 through this limit |
 | MaxFinalStateGenerations | 500 | Positive; combined work and retained-state budgets apply |
@@ -251,9 +253,11 @@ Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.A
 | BoardLockTimeoutSeconds | 5 | Positive; must fit the runtime timer duration |
 | MaxBoardCells | 65536 | Positive; bounds MaxRows times MaxColumns |
 | MaxSimulationCellSteps | 67108864 | Positive; bounds board size times the larger iteration limit |
-| MaxRetainedStateBytes | 536870912 (512 MiB) | Positive; bounds retained cell buffers across concurrent Final runs |
+| MaxRetainedStateBytes | 536870912 (512 MiB) | Positive; bounds estimated working matrices and fingerprint history across concurrent Final runs |
 
-Retained cell buffers are estimated as `MaxRows * MaxColumns * (MaxFinalStateGenerations + 1) * MaxConcurrentSimulations` bytes: the initial board plus each computed board, with one byte per bool cell. This budget excludes JSON conversion, object/dictionary overhead, HTTP processing, connection pools, and GC. It is not a guarantee of total process memory or latency. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
+For each Final run, the retained-state estimate is `3 * (4 * MaxRows * MaxColumns + 32 * MaxRows + 24) + MaxColumns + 256 * (MaxFinalStateGenerations + 1)` bytes, multiplied by `MaxConcurrentSimulations`. It allows three working int matrices (starting/current/next), estimated 64-bit row-array overhead, a one-row fingerprint buffer, and 256 bytes per history entry for a 64-character hex SHA-256 string plus dictionary storage and resizing. At defaults this is about 7.2 MiB across eight simulations, instead of the previous 250.5 MiB estimate for historical bool cell buffers alone. Matrix memory grows with board size; history memory grows with the iteration limit, independently of board size.
+
+This is an estimate, not a guarantee of total process memory or latency. It excludes JSON serialization/copies, HTTP processing, connection pools, hashing runtime overhead, and garbage waiting for collection. Integer matrices use four bytes per cell and allocate a new matrix each generation, so lower retained history does not mean lower total allocation. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
 
 For Compose overrides, add environment variables such as `GameOfLife__BoardLockTimeoutSeconds=10` under `services.api.environment` in an ignored `compose.override.yaml`, then recreate the API. Increase workload and resource budgets after measuring CPU and memory. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
 
@@ -267,7 +271,7 @@ dotnet format --verify-no-changes
 
 The SDK and runtime must both be .NET 8. If installed in a custom directory, set DOTNET_ROOT and invoke that installation so xUnit's child process can find the runtime. Tests use xunit.v3 and real PostgreSQL through Testcontainers; Docker must be running.
 
-Tests cover rules, immutable snapshots, exact cycle detection, JSON persistence, legacy migration, terminal behavior, projection semantics, validation, database errors, independent API hosts mutating the same board, lock timeout/cancellation, session termination, pooled-connection reuse, atomic failed writes, and persistence across new API hosts.
+Tests cover rules, immutable snapshots, cycle detection against an independent full-matrix search, canonical fingerprint encoding, JSON persistence, legacy migration, terminal behavior, projection semantics, validation, database errors, independent API hosts mutating the same board, lock timeout/cancellation, session termination, pooled-connection reuse, atomic failed writes, and persistence across new API hosts.
 
 With the stack running:
 
@@ -301,16 +305,16 @@ rm /tmp/gameoflife-verification.yaml
 
 ### Measured costs
 
-Reference measurements used the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
+Reference measurements after the matrix/fingerprint cleanup used the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
 
 | Workload | Observed duration |
 |---|---|
-| Five sequential N-ahead projections, N = 500 | 0.791–0.886 s; mean 0.815 s |
-| Five sequential full-limit Final searches | 0.796–0.814 s; mean 0.802 s |
-| Eight Final searches on different GUIDs concurrently | 0.899–0.936 s; mean 0.928 s |
-| Eight Final requests on the same GUID concurrently | Seven serialized searches returned 422 in 0.800–5.633 s; one lock timeout returned 503 in 5.015 s |
+| Five sequential N-ahead projections, N = 500 | 0.658–0.739 s; mean 0.696 s |
+| Five sequential full-limit Final searches | 0.631–0.746 s; mean 0.678 s |
+| Eight Final searches on different GUIDs concurrently | 0.839–0.971 s; mean 0.898 s |
+| Eight Final requests on the same GUID concurrently | Eight serialized searches returned 422 in 0.649–5.220 s; no lock timeouts in this run |
 
-The same-GUID requests left generation 0 and Active status unchanged. Lock timeout bounds acquisition, not the search after acquisition, so a completed request can take longer than five seconds. Timings are observations from one run, not latency guarantees; resource budgets also account for retained boards and concurrent requests.
+The same-GUID requests left generation 0 and Active status unchanged. Lock timeouts remain possible under heavier contention. Lock timeout bounds acquisition, not the search after acquisition, so a completed request can take longer than five seconds. Timings are observations from one run, not latency guarantees; resource budgets also account for working matrices, fingerprint history, and concurrent requests.
 
 ## Operational limits
 

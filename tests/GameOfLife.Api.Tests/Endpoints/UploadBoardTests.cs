@@ -23,12 +23,7 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
     {
         using var client = factory.CreateClient();
         // The glider is not symmetric, so a board stored transposed or flipped would not equal it.
-        var glider = Board.FromCells(new bool[,]
-        {
-            { false, true, false },
-            { false, false, true },
-            { true, true, true },
-        });
+        var glider = Board.FromMatrix([[0, 1, 0], [0, 0, 1], [1, 1, 1]]);
 
         using var response = await PostJsonAsync(client, """{ "cells": [[0,1,0],[0,0,1],[1,1,1]] }""");
 
@@ -39,7 +34,7 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
         var repository = factory.Services.GetRequiredService<IBoardRepository>();
         var stored = await repository.FindAsync(id, CancellationToken.None);
         Assert.NotNull(stored);
-        Assert.Equal(glider, stored.Board);
+        Assert.Equal(glider.ToMatrix(), stored.Board.ToMatrix());
     }
 
     [Theory]

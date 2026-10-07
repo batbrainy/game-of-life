@@ -57,7 +57,7 @@ public static partial class BoardEndpoints
         UploadBoardRequest request, IBoardRepository repository, IOptions<GameOfLifeOptions> options,
         ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
-        if (!BoardMatrixMapper.TryFromMatrix(
+        if (!BoardMatrixValidator.TryFromMatrix(
             request.Cells, options.Value.MaxRows, options.Value.MaxColumns, out var board, out var errors))
         {
             return TypedResults.ValidationProblem(errors);
@@ -148,11 +148,11 @@ public static partial class BoardEndpoints
         }
 
         var board = Simulation.Advance(state.Board, n, cancellationToken);
-        return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, BoardMatrixMapper.ToMatrix(board), state.Generation));
+        return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, board.ToMatrix(), state.Generation));
     }
 
     private static BoardStateResponse ToStateResponse(StoredBoard state) => new(
-        state.Id, state.Generation, state.Board.Rows, state.Board.Columns, BoardMatrixMapper.ToMatrix(state.Board),
+        state.Id, state.Generation, state.Board.Rows, state.Board.Columns, state.Board.ToMatrix(),
         state.Status.ToString(), state.CycleStartGeneration, state.Period);
 
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(
