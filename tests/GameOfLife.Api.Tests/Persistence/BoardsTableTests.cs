@@ -1,106 +1,83 @@
+using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
+using GameOfLife.Core;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
 using Npgsql;
+
+using NpgsqlTypes;
 
 namespace GameOfLife.Api.Tests.Persistence;
 
 [Collection(PostgresFixture.CollectionName)]
 public sealed class BoardsTableTests(PostgresFixture postgres)
 {
-    [Fact]
-    public async Task EmbeddedScriptsCreateBoardsWithExactlyFiveColumns()
+    [Theory]
+    [InlineData(2, 3)]
+    [InlineData(1, 4)]
+    [InlineData(4, 1)]
+    public async Task UpgradePreservesLegacyCellsIdsAndTimestamps(int rows, int columns)
     {
-        await using var dataSource = await CreateMigratedDatabaseAsync();
-
-        // udt_name is PostgreSQL's own name for a type: int4 is integer and _bool is boolean[].
-        await using var command = dataSource.CreateCommand(
-            "SELECT column_name, udt_name, is_nullable FROM information_schema.columns WHERE table_name = 'boards' ORDER BY ordinal_position");
-        await using var reader = await command.ExecuteReaderAsync();
-        var columns = new List<(string Name, string Type, string IsNullable)>();
-        while (await reader.ReadAsync())
+        await using var source = NpgsqlDataSource.Create(await postgres.CreateDatabaseAsync());
+        var runner = new MigrationRunner(source, NullLogger<MigrationRunner>.Instance);
+        var scripts = EmbeddedMigrationScripts.Load();
+        await runner.ApplyAsync(scripts.Take(1).ToList(), CancellationToken.None);
+        var id = Guid.NewGuid();
+        var created = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        bool[] cells = Enumerable.Range(0, rows * columns).Select(i => i % 3 == 1).ToArray();
+        await using (var insert = source.CreateCommand("INSERT INTO boards (id, row_count, column_count, cells, created_at) VALUES ($1,$2,$3,$4,$5)"))
         {
-            columns.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            insert.Parameters.AddWithValue(id);
+            insert.Parameters.AddWithValue(rows);
+            insert.Parameters.AddWithValue(columns);
+            insert.Parameters.AddWithValue(cells);
+            insert.Parameters.AddWithValue(created);
+            await insert.ExecuteNonQueryAsync();
         }
 
-        Assert.Equal(
-            new[]
-            {
-                ("id", "uuid", "NO"),
-                ("row_count", "int4", "NO"),
-                ("column_count", "int4", "NO"),
-                ("cells", "_bool", "NO"),
-                ("created_at", "timestamptz", "NO"),
-            },
-            columns);
-    }
-
-    [Fact]
-    public async Task ValidRowInserts()
-    {
-        await using var dataSource = await CreateMigratedDatabaseAsync();
-        bool[] cells = [false, true, false, false, true, false, false, true, false];
-
-        await InsertAsync(dataSource, 3, 3, cells);
-
-        await using var count = dataSource.CreateCommand("SELECT count(*) FROM boards");
-        Assert.Equal(1L, await count.ExecuteScalarAsync());
+        await runner.ApplyAsync(scripts, CancellationToken.None);
+        var state = await new NpgsqlBoardRepository(source, NullLogger<NpgsqlBoardRepository>.Instance).FindAsync(id, CancellationToken.None);
+        Assert.NotNull(state);
+        Assert.Equal(Board.FromCellArray(rows, columns, cells), state.Board);
+        Assert.Equal(created, state.CreatedAt);
+        Assert.Equal(created, state.UpdatedAt);
+        Assert.Equal(0, state.Generation);
+        Assert.Equal(BoardStatus.Active, state.Status);
+        Assert.Null(state.CompletedAt);
+        Assert.Empty(await runner.ApplyAsync(scripts, CancellationToken.None));
     }
 
     [Theory]
-    [InlineData(0, 3, 0, "boards_row_count_check")]
-    [InlineData(3, 0, 0, "boards_column_count_check")]
-    [InlineData(3, 3, 10, "boards_cells_shape")]
-    [InlineData(3, 3, 8, "boards_cells_shape")]
-    public async Task ZeroDimensionOrOneCellTooManyOrTooFewIsRejectedByACheck(int rowCount, int columnCount, int cellCount, string constraint)
+    [InlineData("UPDATE boards SET status = 'Unknown'")]
+    [InlineData("UPDATE boards SET status = 'Stable'")]
+    [InlineData("UPDATE boards SET generation = -1")]
+    [InlineData("UPDATE boards SET cycle_length = 2")]
+    [InlineData("UPDATE boards SET cells = '{}'::jsonb")]
+    [InlineData("UPDATE boards SET cells = '[]'::jsonb")]
+    public async Task InvalidStateCannotBeStored(string sql)
     {
-        await using var dataSource = await CreateMigratedDatabaseAsync();
-
-        await AssertRejectedByCheckAsync(constraint, () => InsertAsync(dataSource, rowCount, columnCount, new bool[cellCount]));
+        await using var source = NpgsqlDataSource.Create(await postgres.CreateMigratedDatabaseAsync());
+        var repository = new NpgsqlBoardRepository(source, NullLogger<NpgsqlBoardRepository>.Instance);
+        await repository.AddAsync(Guid.NewGuid(), Board.FromCells(new bool[,] { { true } }), CancellationToken.None);
+        await using var command = source.CreateCommand(sql);
+        var error = await Assert.ThrowsAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
+        Assert.Equal(PostgresErrorCodes.CheckViolation, error.SqlState);
     }
 
-    [Fact]
-    public async Task CellsContainingANullAreRejectedByTheShapeCheck()
+    [Theory]
+    [InlineData("[[2]]")]
+    [InlineData("[[]]")]
+    [InlineData("[null]")]
+    public async Task CorruptedInnerMatrixIsRejectedWhenLoaded(string json)
     {
-        await using var dataSource = await CreateMigratedDatabaseAsync();
-        bool?[] cells = [false, true, null, false, true, false, false, true, false];
-
-        await AssertRejectedByCheckAsync("boards_cells_shape", () => InsertAsync(dataSource, 3, 3, cells));
-    }
-
-    [Fact]
-    public async Task TwoDimensionalCellsAreRejectedByTheShapeCheck()
-    {
-        await using var dataSource = await CreateMigratedDatabaseAsync();
-
-        await AssertRejectedByCheckAsync("boards_cells_shape", () => InsertAsync(dataSource, 3, 3, new bool[3, 3]));
-    }
-
-    private async Task<NpgsqlDataSource> CreateMigratedDatabaseAsync()
-    {
-        var dataSource = NpgsqlDataSource.Create(await postgres.CreateDatabaseAsync());
-        await new MigrationRunner(dataSource, NullLogger<MigrationRunner>.Instance)
-            .ApplyAsync(EmbeddedMigrationScripts.Load(), CancellationToken.None);
-        return dataSource;
-    }
-
-    private static async Task InsertAsync(NpgsqlDataSource dataSource, int rowCount, int columnCount, object cells)
-    {
-        await using var command = dataSource.CreateCommand(
-            "INSERT INTO boards (id, row_count, column_count, cells) VALUES ($1, $2, $3, $4)");
-        command.Parameters.Add(new NpgsqlParameter { Value = Guid.NewGuid() });
-        command.Parameters.Add(new NpgsqlParameter { Value = rowCount });
-        command.Parameters.Add(new NpgsqlParameter { Value = columnCount });
-        command.Parameters.Add(new NpgsqlParameter { Value = cells });
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static async Task AssertRejectedByCheckAsync(string constraint, Func<Task> insert)
-    {
-        var exception = await Assert.ThrowsAsync<PostgresException>(insert);
-
-        Assert.Equal(PostgresErrorCodes.CheckViolation, exception.SqlState);
-        Assert.Equal(constraint, exception.ConstraintName);
+        await using var source = NpgsqlDataSource.Create(await postgres.CreateMigratedDatabaseAsync());
+        var id = Guid.NewGuid();
+        await using var insert = source.CreateCommand("INSERT INTO boards(id,row_count,column_count,cells) VALUES($1,1,1,$2)");
+        insert.Parameters.AddWithValue(id);
+        insert.Parameters.AddWithValue(NpgsqlDbType.Jsonb, json);
+        await insert.ExecuteNonQueryAsync();
+        var repository = new NpgsqlBoardRepository(source, NullLogger<NpgsqlBoardRepository>.Instance);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.FindAsync(id, CancellationToken.None));
     }
 }

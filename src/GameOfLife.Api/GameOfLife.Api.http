@@ -17,17 +17,20 @@ Accept: application/json
 
 ###
 
-GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/next
+# Advances and persists one generation; a completed board returns 409.
+POST {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/next
 Accept: application/json
 
 ###
 
+# Projects from the current snapshot without changing the stored board.
 GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/generations/10
 Accept: application/json
 
 ###
 
-GET {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/final
+# Persists a Stable or Cycle result, or returns the saved terminal result.
+POST {{GameOfLife.Api_HostAddress}}/api/v1/boards/{{boardId}}/final
 Accept: application/json
 
 ###

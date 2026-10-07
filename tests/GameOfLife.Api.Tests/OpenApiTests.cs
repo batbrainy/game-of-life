@@ -13,11 +13,11 @@ public sealed class OpenApiTests(ApiFactory factory) : IClassFixture<ApiFactory>
     // The status codes are in ascending order, because the test compares them with the document's codes sorted.
     public static TheoryData<string, string, string, string, string[]> BoardOperations => new()
     {
-        { "/api/v1/boards", "post", "UploadBoard", "Upload a board", ["201", "400"] },
-        { "/api/v1/boards/{id}", "get", "GetBoard", "Get a stored board", ["200", "400", "404"] },
-        { "/api/v1/boards/{id}/next", "get", "GetNextGeneration", "Get the next generation of a stored board", ["200", "400", "404", "503"] },
-        { "/api/v1/boards/{id}/generations/{n}", "get", "GetGeneration", "Get a stored board n generations ahead", ["200", "400", "404", "503"] },
-        { "/api/v1/boards/{id}/final", "get", "GetFinalState", "Get the final state of a stored board", ["200", "400", "404", "422", "503"] },
+        { "/api/v1/boards", "post", "UploadBoard", "Upload a board", ["201", "400", "413", "415", "503"] },
+        { "/api/v1/boards/{id}", "get", "GetBoard", "Get a stored board", ["200", "400", "404", "503"] },
+        { "/api/v1/boards/{id}/next", "post", "GetNextGeneration", "Advance and persist the next generation", ["200", "400", "404", "409", "422", "503"] },
+        { "/api/v1/boards/{id}/generations/{n}", "get", "GetGeneration", "Project n generations from the current snapshot without saving", ["200", "400", "404", "409", "422", "503"] },
+        { "/api/v1/boards/{id}/final", "post", "GetFinalState", "Find and persist a stable state or cycle", ["200", "400", "404", "409", "422", "503"] },
     };
 
     [Theory]

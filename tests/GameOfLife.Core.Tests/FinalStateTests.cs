@@ -46,8 +46,9 @@ public sealed class FinalStateTests
         var result = Simulation.FindFinalState(board, Limit, CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.Equal(generation, result.Generation);
+        Assert.Equal(generation, result.CycleStartGeneration);
         Assert.Equal(period, result.Period);
+        Assert.Equal(generation + period, result.GenerationsComputed);
         Assert.Equal(StepForward(board, generation), result.Board);
         Assert.Equal(endsEmpty, result.Board.ToCellArray().All(isAlive => !isAlive));
     }

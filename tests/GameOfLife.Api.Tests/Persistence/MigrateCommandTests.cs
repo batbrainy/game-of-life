@@ -28,7 +28,8 @@ public sealed class MigrateCommandTests(PostgresFixture postgres)
         int exitCode = await RunProgramAsync("migrate", $"--ConnectionStrings:GameOfLife={connectionString}");
 
         Assert.Equal(0, exitCode);
-        Assert.Equal(1, Assert.Single(recordedByFirstRun).Version);
+        Assert.Equal(2, recordedByFirstRun.Count);
+        Assert.Equal(2, recordedByFirstRun[^1].Version);
         Assert.Equal(recordedByFirstRun, await ReadRecordedAsync(connectionString));
     }
 

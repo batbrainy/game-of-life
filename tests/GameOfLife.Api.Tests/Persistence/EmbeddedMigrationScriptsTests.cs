@@ -7,7 +7,10 @@ public sealed class EmbeddedMigrationScriptsTests
     [Fact]
     public void LoadReturnsTheBoardsTableScript()
     {
-        var script = Assert.Single(EmbeddedMigrationScripts.Load());
+        var scripts = EmbeddedMigrationScripts.Load();
+        Assert.Equal(2, scripts.Count);
+        Assert.Equal(2, scripts[1].Version);
+        var script = scripts[0];
 
         Assert.Equal(1, script.Version);
         Assert.Equal("create_boards", script.Name);

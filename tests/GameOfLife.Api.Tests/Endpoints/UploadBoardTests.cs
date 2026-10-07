@@ -37,7 +37,9 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
         var id = body.RootElement.GetProperty("id").GetGuid();
         Assert.EndsWith($"/api/v1/boards/{id}", response.Headers.Location?.OriginalString);
         var repository = factory.Services.GetRequiredService<IBoardRepository>();
-        Assert.Equal(glider, await repository.FindAsync(id, CancellationToken.None));
+        var stored = await repository.FindAsync(id, CancellationToken.None);
+        Assert.NotNull(stored);
+        Assert.Equal(glider, stored.Board);
     }
 
     [Theory]
