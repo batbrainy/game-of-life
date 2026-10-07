@@ -7,6 +7,8 @@ A C# .NET 8 REST API for Conway's Game of Life, with PostgreSQL 16 persistence. 
 Prerequisites: Docker with Compose v2 and curl. The .NET 8 SDK is needed to run the tests or API on the host; `global.json` selects it.
 
 ```sh
+git clone https://github.com/batbrainy/game-of-life.git
+cd game-of-life
 [ -f .env ] || cp .env.example .env
 docker compose up --build -d --wait
 ```
@@ -34,9 +36,9 @@ Stop with `docker compose down`. The `pgdata` volume retains boards. `docker com
 | Liveness | `GET /health/live` | Report whether the process is serving requests. |
 | Readiness | `GET /health/ready` | Check database connectivity and required migration versions. |
 
-The exercise names operations but leaves mutation behavior open to interpretation. This API deliberately uses the hybrid semantics above. Next and Final use POST because they change persisted state. Their former GET routes return 405; clients must update their calls.
+Next and Final use POST because they change persisted state; GET on either route returns 405.
 
-A board has status `Active`, `Stable`, or `Cycle`. Upload and ordinary Next leave it Active; Final classifies completion. Once terminal, Next returns 409 with the status and a `finalStateUrl`. Repeating Final returns the saved result without recalculating or changing timestamps. Projections remain available for terminal boards.
+Upload and Next leave status `Active`; Final classifies a board as `Stable` or `Cycle`. Terminal Next returns 409 with `boardStatus` and `finalStateUrl`. Repeating Final returns the saved result without changing timestamps. Projections remain available for terminal boards.
 
 The board keeps its uploaded dimensions. Positions outside the grid count as dead; edges do not wrap.
 
@@ -139,9 +141,7 @@ sequenceDiagram
     api-->>client: 200 with persisted result
 ```
 
-A competing Next or Final for the same GUID retries acquisition within its deadline, then reads the latest committed state only after obtaining the lock. A different GUID can proceed concurrently. Upload uses a new GUID; Fetch and N-ahead read a committed snapshot without taking the mutation lock. N-ahead calculates in memory and returns directly without an UPDATE.
-
-If acquisition times out, the API returns 503. If Final exhausts its iteration limit, it releases the lock and returns 422 without saving intermediate progress. Terminal checks also happen under the lock: Next returns 409, while Final returns the saved terminal result. A lost session aborts the mutation; it cannot reconnect to write a result computed under the old lock.
+Competing mutations of the same GUID wait within the acquisition deadline and then read the latest state. Different GUIDs can proceed concurrently. A lost session aborts the mutation; it cannot reconnect to save work calculated under the old lock.
 
 ### Board lifecycle
 
@@ -154,29 +154,19 @@ stateDiagram-v2
     Active --> Cycle: Final, period greater than 1
 ```
 
-Next increments the generation and leaves status Active. Stable and Cycle are terminal for advancement. Their rows remain available to Fetch and N-ahead, and repeated Final calls return the saved result. Projections, failed searches, and rejected mutations leave the stored state unchanged. Final saves the matrix at the repetition-detection generation, along with the cycle start and period; each board retains one current row.
+Projections, failed searches, and rejected mutations leave storage unchanged. Final saves the repeated matrix at its detection generation, with cycle start and period.
 
 ## Persistence and concurrency
 
-`GameOfLife.Core` contains the immutable Board, Conway rules, and in-memory simulation. It has no HTTP or database dependencies. Each step reads the previous buffer and allocates a separate next buffer. Internally the engine uses bool arrays; the API and persisted JSON matrix use integer 0/1 rows.
+PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, timestamps, and optional cycle start and period. No history or hashes are persisted. `BoardMatrixMapper` validates and converts matrices at upload and load boundaries; the repository owns JSON serialization. Database constraints check outer JSON shape, dimensions, generation, and terminal metadata. Inner rows and cell values are checked when loading.
 
-PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, creation/update/completion timestamps, and optional cycle-start generation and length. `BoardMatrixMapper` converts between the immutable Board and `int[][]`; the repository owns JSON serialization/deserialization. Complete matrix validation happens at application boundaries, including loading stored data; database constraints also check basic JSON shape, dimensions, generation, and terminal metadata. Historical matrices and hashes are not persisted.
+Next and Final share a session advisory lock. The mutation session owns the same connection through acquisition, read, atomic save, and explicit unlock before pool reuse, including failure and cancellation paths. Calculation holds no database transaction. Upload, Fetch, and projection do not take this lock.
 
-`BoardService` coordinates mutations through `IBoardMutationSession`. `NpgsqlBoardRepository` owns the session-level PostgreSQL advisory lock and its connection:
-
-1. Open one connection and acquire the board's exclusive advisory lock within the configured timeout.
-2. Read the latest snapshot and check terminal status after acquiring the lock.
-3. Calculate in memory while retaining the session, without a long-running transaction.
-4. Save matrix, generation, status, and metadata atomically in one UPDATE on the same connection.
-5. Explicitly unlock before returning the connection to its pool, including all failure/cancellation paths.
-
-Next and Final share this lock across application instances. Other GUIDs can execute concurrently. Upload, Fetch, and N-ahead do not take it. The process-wide simulation limiter is additional admission control; it is not the distributed lock.
-
-The key uses SHA-256 over a fixed namespace and canonical GUID, with a defined byte order and the sign bit set. Negative board keys are separate from the migration runner's positive lock key. Rare hash collisions only serialize unrelated boards. This avoids adding Redis when PostgreSQL already provides shared coordination. Session locks are released when their database session ends. If the session fails, the operation cannot reconnect and save stale work. If explicit unlock fails, the pool is cleared so uncertain sessions are discarded when returned. See [PostgreSQL advisory locks](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS).
+The deterministic key uses SHA-256 over a fixed namespace and canonical GUID, with a defined byte order and a negative sign to separate board keys from the migration lock. Rare collisions only serialize unrelated boards. PostgreSQL releases locks when a session ends. If explicit unlock fails, the pool is cleared so uncertain sessions are discarded when returned. See [PostgreSQL advisory locks](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS).
 
 Multiplexing is rejected because locks require session affinity. With pooling enabled, startup requires at least two more pool slots than the configured simulation concurrency, leaving headroom for other requests. This headroom is not a separate reserved pool. Direct SQL writers must follow the same advisory-lock protocol; advisory locks do not constrain unrelated SQL automatically.
 
-A Final run keeps a dictionary of immutable boards and first-seen steps. Hashes narrow lookups, then full matrix equality prevents false cycle detection from hash collisions. The detected matrix is persisted; period 1 is Stable, greater than 1 is Cycle. If the limit expires, no intermediate state is saved.
+The core uses immutable bool buffers. Final keeps a dictionary of boards and first-seen steps for its current run; full matrix equality prevents false cycle detection from hash collisions. Limit exhaustion returns 422 without saving intermediate progress.
 
 ### Upgrade an existing database
 
@@ -207,9 +197,9 @@ Uploads require a nonempty rectangular matrix with integer 0 or 1 cells. Null ro
 
 Terminal conflicts include `boardStatus` and `finalStateUrl`. Iteration-limit errors include `maxGenerations`. Admission rejection and board-lock timeout include `Retry-After: 1`. Lock acquisition uses one deadline covering pool/connection acquisition and lock waiting. Request cancellation interrupts waiting or simulation between generations, and releases owned resources.
 
-Application errors use Problem Details. Content negotiation can produce plain-text or empty responses when the client refuses JSON. The request-body 413 may omit `type`. Kestrel can reject malformed headers or oversized headers before the application pipeline, with an empty 400 or 431 body regardless of Accept.
+Application errors use Problem Details, subject to content negotiation. Kestrel may reject malformed or oversized requests before the application pipeline with an empty error response.
 
-Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.Api/appsettings.json). Environment variables or environment-specific settings can override each setting below. `GameOfLifeOptions` contains validation, with no duplicated defaults or fixed policy ceilings.
+Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.Api/appsettings.json). Environment variables or environment-specific settings can override them; startup validates positive values, combined budgets, and runtime constraints.
 
 | Setting | Default | Validation |
 |---|---|---|
@@ -223,9 +213,9 @@ Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.A
 | MaxSimulationCellSteps | 67108864 | Positive; bounds board size times the larger iteration limit |
 | MaxRetainedStateBytes | 536870912 (512 MiB) | Positive; bounds retained cell buffers across concurrent Final runs |
 
-All settings are validated on startup. Retained cell buffers are estimated as `MaxRows * MaxColumns * (MaxFinalStateGenerations + 1) * MaxConcurrentSimulations` bytes: the initial board plus each computed board, with one byte per bool cell. This budget excludes JSON conversion, object/dictionary overhead, HTTP processing, connection pools, and GC. It is not a guarantee of total process memory or latency. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
+Retained cell buffers are estimated as `MaxRows * MaxColumns * (MaxFinalStateGenerations + 1) * MaxConcurrentSimulations` bytes: the initial board plus each computed board, with one byte per bool cell. This budget excludes JSON conversion, object/dictionary overhead, HTTP processing, connection pools, and GC. It is not a guarantee of total process memory or latency. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
 
-For example, `GameOfLife__MaxRows=2048` and `GameOfLife__MaxColumns=1` permit a tall board within the default resource budgets; there is no fixed 1024-row ceiling. `GameOfLife__BoardLockTimeoutSeconds=10` changes lock waiting. Increase resource budgets deliberately when a larger workload requires them, after measuring available CPU and memory. For Compose, add settings under `services.api.environment` in a local `compose.override.yaml`; recreate the API after changing them. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
+For Compose overrides, add environment variables such as `GameOfLife__BoardLockTimeoutSeconds=10` under `services.api.environment` in an ignored `compose.override.yaml`, then recreate the API. Increase workload and resource budgets after measuring CPU and memory. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
 
 ## Build and test
 
@@ -239,23 +229,39 @@ The SDK and runtime must both be .NET 8. If installed in a custom directory, set
 
 Tests cover rules, immutable snapshots, exact cycle detection, JSON persistence, legacy migration, terminal behavior, projection semantics, validation, database errors, independent API hosts mutating the same board, lock timeout/cancellation, session termination, pooled-connection reuse, atomic failed writes, and persistence across new API hosts.
 
-Run scripts against an isolated Compose project when checking crashes:
+With the stack running:
 
 ```sh
 scripts/smoke-test.sh
 scripts/measure-worst-case.sh http://localhost:8080 8
-scripts/verify-restart.sh
 ```
 
 `smoke-test.sh` verifies mutation, projection, completion, and HTTP errors. `measure-worst-case.sh` times full-limit searches sequentially, concurrently on different GUIDs, and under same-GUID contention; the latter may reach the lock timeout. Its required concurrency argument must match the running API configuration. It rejects early/cached final results for its deterministic test pattern.
 
-`verify-restart.sh` restarts, kills, and recreates the selected Compose project's containers. It verifies both an advanced Active board and a completed Cycle board. Select a dedicated project with COMPOSE_PROJECT_NAME and separate ports, image tag, and volume before running it; do not use a stack whose other work must remain running.
+`verify-restart.sh` restarts, kills, and recreates containers and checks persisted Active and Cycle boards. Run it on a dedicated stack with separate ports, image tag, and volume. For example, from a clean checkout without a local Compose override:
 
-### Verification and measurements
+```sh
+cat > /tmp/gameoflife-verification.yaml <<'YAML'
+services:
+  api:
+    image: game-of-life-verification
+  migrate:
+    image: game-of-life-verification
+YAML
+export COMPOSE_PROJECT_NAME=gameoflife-verification
+export COMPOSE_FILE="$PWD/compose.yaml:/tmp/gameoflife-verification.yaml"
+export API_PORT=18080 DB_PORT=15433
+docker compose up --build -d --wait
+scripts/smoke-test.sh http://localhost:18080
+scripts/verify-restart.sh http://localhost:18080
+docker compose down -v  # deletes only this verification project's data
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE API_PORT DB_PORT
+rm /tmp/gameoflife-verification.yaml
+```
 
-The current implementation passed 266 tests (92 core and 174 API/configuration/PostgreSQL), a warning-free .NET 8 build, formatting verification, 19 Docker smoke checks, and 13 restart/crash checks. Configuration tests cover overrides above the former fixed ceilings, budget boundaries, positive values, and arithmetic/runtime limits. Final-state tests also verify that generation overflow depends on computed steps rather than the configured search budget. The restart checks cover API restart, abrupt API termination, abrupt PostgreSQL termination, and container recreation while retaining the database volume.
+### Measured costs
 
-Measured with the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
+Reference measurements used the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
 
 | Workload | Observed duration |
 |---|---|
@@ -270,14 +276,11 @@ The same-GUID requests left generation 0 and Active status unchanged. Lock timeo
 
 - Computation runs in the request, not as a durable background job. Cancellation before saving or iteration exhaustion saves no progress. A committed update survives a lost response; the client may not know whether it committed.
 - Next and Upload are not idempotent. Retrying Next can advance twice; retrying Upload creates another GUID. Fetch current state after an ambiguous response. The API does not automatically replay uncertain mutations.
-- Synchronous simulation occupies thread-pool workers. Startup raises the minimum to at least processor count plus MaxConcurrentSimulations, preserving the thread-pool improvement already on the main branch. This leaves workers for health checks and overload responses, but CPU contention still affects latency.
+- Synchronous simulation occupies thread-pool workers. Startup raises the minimum to at least processor count plus MaxConcurrentSimulations. This leaves workers for health checks and overload responses, but CPU contention still affects latency.
 - There is no per-client rate limiting, general request deadline, board deletion/retention policy, authentication, or TLS termination. The sample exposes loopback HTTP for local use.
-- Each Final retains earlier matrices in memory during that run. At default dimensions and 500 steps this is approximately 33 MB of cell buffers per request, before object/JSON/runtime overhead. Increase workload limits only after measuring available CPU and memory.
 - A database that accepts connections but stops answering can retain admission permits until command/connection timeouts or request cancellation. Board-lock waiting has its separate deadline; an in-flight save still follows database command timeout behavior.
 - After a database restart, stale pooled connections may produce transient 503 responses while broken connections are discarded. Restart checks retry fetches; they do not replay mutation requests.
 - The local sample uses one PostgreSQL role for migration and application access. Production deployment should separate schema privileges.
-- .NET 8 reaches end of support on November 10, 2026. The exercise explicitly targets net8.0; deployment beyond that date requires an upgrade plan. See [Microsoft's support policy](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core).
-- TreatWarningsAsErrors makes NuGet audit warnings build errors. With the selected .NET 8 defaults, restore audits direct dependencies; transitive auditing requires enabling NuGetAuditMode=all. Resolve advisories deliberately rather than relying on unchanged restore results.
 
 ## License
 

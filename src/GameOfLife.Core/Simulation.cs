@@ -1,6 +1,5 @@
 namespace GameOfLife.Core;
 
-/// <summary>Runs a board forward through several generations.</summary>
 public static class Simulation
 {
     /// <summary>Returns the board <paramref name="generations"/> steps after <paramref name="board"/>; 0 returns it unchanged.</summary>
@@ -34,8 +33,6 @@ public static class Simulation
         ArgumentNullException.ThrowIfNull(board);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxGenerations, 1);
 
-        // Every board seen so far and the generation it first appeared at. Board compares by its cells, so a
-        // repeat is found with one lookup instead of a comparison against every earlier generation.
         var firstSeenAt = new Dictionary<Board, int> { [board] = 0 };
         var current = board;
         for (int step = 0; step < maxGenerations; step++)

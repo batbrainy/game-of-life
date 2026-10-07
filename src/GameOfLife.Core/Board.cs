@@ -3,7 +3,6 @@ namespace GameOfLife.Core;
 /// <summary>A grid of live (<see langword="true"/>) and dead cells that cannot change after it is created.</summary>
 public sealed class Board : IEquatable<Board>
 {
-    // The grid row by row: the cell at (row, column) is _cells[row * Columns + column].
     private readonly bool[] _cells;
     private readonly int _hashCode;
 
@@ -115,7 +114,6 @@ public sealed class Board : IEquatable<Board>
 
     public override int GetHashCode() => _hashCode;
 
-    // Counts the live cells among the 8 around (row, column), skipping positions outside the grid.
     private int CountLiveNeighbours(int row, int column)
     {
         int count = 0;

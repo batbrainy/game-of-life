@@ -68,6 +68,27 @@ public sealed class NpgsqlBoardRepositoryTests(PostgresFixture postgres)
         }
     }
 
+    // The SQL shape constraint checks the outer array; loading must also reject corrupt inner rows and values.
+    [Theory]
+    [InlineData("[null]", 1)]
+    [InlineData("[[]]", 1)]
+    [InlineData("[[0,1]]", 1)]
+    [InlineData("[[2]]", 1)]
+    [InlineData("[[0]]", 2)]
+    public async Task InvalidStoredMatrixIsRejectedWhenLoading(string matrix, int columns)
+    {
+        await using var dataSource = await CreateMigratedDatabaseAsync();
+        var repository = new NpgsqlBoardRepository(dataSource, NullLogger<NpgsqlBoardRepository>.Instance);
+        var id = Guid.NewGuid();
+        await repository.AddAsync(id, RandomBoard(1, columns), CancellationToken.None);
+        await using var command = dataSource.CreateCommand("UPDATE boards SET cells = $1 WHERE id = $2");
+        command.Parameters.AddWithValue(NpgsqlTypes.NpgsqlDbType.Jsonb, matrix);
+        command.Parameters.AddWithValue(id);
+        await command.ExecuteNonQueryAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repository.FindAsync(id, CancellationToken.None));
+    }
+
     [Fact]
     public async Task AddingTheSameIdTwiceIsAUniqueViolation()
     {

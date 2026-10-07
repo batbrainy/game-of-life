@@ -3,7 +3,6 @@ using System.Text.RegularExpressions;
 
 namespace GameOfLife.Api.Persistence.Migrations;
 
-/// <summary>The migration scripts in Persistence/Migrations/Scripts, embedded in this assembly when it is built.</summary>
 public static partial class EmbeddedMigrationScripts
 {
     /// <summary>Returns every embedded script, in version order.</summary>
@@ -40,7 +39,6 @@ public static partial class EmbeddedMigrationScripts
         return (int.Parse(match.Groups["version"].Value, CultureInfo.InvariantCulture), match.Groups["name"].Value);
     }
 
-    // Four digits, an underscore, then words of lowercase letters and digits joined by single underscores.
     [GeneratedRegex(@"^(?<version>[0-9]{4})_(?<name>[a-z0-9]+(_[a-z0-9]+)*)\.sql$")]
     private static partial Regex FileNamePattern();
 }

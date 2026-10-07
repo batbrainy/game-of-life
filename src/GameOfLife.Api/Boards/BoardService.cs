@@ -35,7 +35,6 @@ public sealed class BoardService(IBoardRepository repository, IOptions<GameOfLif
             return new(state, toFinalState ? MutationError.None : MutationError.Terminal);
         }
 
-        int limit = toFinalState ? options.Value.MaxFinalStateGenerations : 1;
         if (!options.Value.AllowsSimulation(state.Board))
         {
             return new(state, MutationError.BoardSizeLimit);
@@ -53,7 +52,7 @@ public sealed class BoardService(IBoardRepository repository, IOptions<GameOfLif
             return new(saved);
         }
 
-        var final = Simulation.FindFinalState(state.Board, limit, cancellationToken);
+        var final = Simulation.FindFinalState(state.Board, options.Value.MaxFinalStateGenerations, cancellationToken);
         if (final is null)
         {
             return new(state, MutationError.IterationLimit);

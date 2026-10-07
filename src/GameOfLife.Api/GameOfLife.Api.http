@@ -1,4 +1,4 @@
-@GameOfLife.Api_HostAddress = http://localhost:5055
+@GameOfLife.Api_HostAddress = http://localhost:8080
 # Paste the id that the upload request returns.
 @boardId = 00000000-0000-0000-0000-000000000000
 

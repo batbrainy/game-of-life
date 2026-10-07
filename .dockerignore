@@ -3,3 +3,7 @@
 .git
 .env
 **/TestResults
+
+.env.*
+!.env.example
+compose.override.yaml

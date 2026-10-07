@@ -57,16 +57,15 @@ public static partial class BoardEndpoints
         UploadBoardRequest request, IBoardRepository repository, IOptions<GameOfLifeOptions> options,
         ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
-        if (!BoardRequestValidator.TryValidate(request.Cells, options.Value, out var errors))
+        if (!BoardMatrixMapper.TryFromMatrix(
+            request.Cells, options.Value.MaxRows, options.Value.MaxColumns, out var board, out var errors))
         {
             return TypedResults.ValidationProblem(errors);
         }
 
-        int rows = request.Cells.Length;
-        int columns = request.Cells[0].Length;
         var id = Guid.NewGuid();
-        await repository.AddAsync(id, BoardMatrixMapper.FromMatrix(request.Cells, rows, columns), cancellationToken);
-        LogStored(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, rows, columns);
+        await repository.AddAsync(id, board, cancellationToken);
+        LogStored(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, board.Rows, board.Columns);
         return TypedResults.Created($"/api/v1/boards/{id}", new UploadBoardResponse(id));
     }
 
@@ -74,7 +73,7 @@ public static partial class BoardEndpoints
         Guid id, IBoardRepository repository, CancellationToken cancellationToken)
     {
         var state = await repository.FindAsync(id, cancellationToken);
-        return state is null ? BoardNotFound(id) : TypedResults.Ok(BoardMapper.ToStateResponse(state));
+        return state is null ? BoardNotFound(id) : TypedResults.Ok(ToStateResponse(state));
     }
 
     private static Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> NextAsync(
@@ -115,7 +114,7 @@ public static partial class BoardEndpoints
             case MutationError.BoardSizeLimit:
                 return BoardSizeLimit();
             default:
-                return TypedResults.Ok(BoardMapper.ToStateResponse(result.State
+                return TypedResults.Ok(ToStateResponse(result.State
                     ?? throw new InvalidOperationException("A successful mutation must return a state.")));
         }
     }
@@ -151,6 +150,10 @@ public static partial class BoardEndpoints
         var board = Simulation.Advance(state.Board, n, cancellationToken);
         return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, BoardMatrixMapper.ToMatrix(board), state.Generation));
     }
+
+    private static BoardStateResponse ToStateResponse(StoredBoard state) => new(
+        state.Id, state.Generation, state.Board.Rows, state.Board.Columns, BoardMatrixMapper.ToMatrix(state.Board),
+        state.Status.ToString(), state.CycleStartGeneration, state.Period);
 
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(
         detail: $"No board is stored under the id {id}.", statusCode: StatusCodes.Status404NotFound, title: "Board not found");

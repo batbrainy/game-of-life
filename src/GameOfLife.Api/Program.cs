@@ -25,7 +25,6 @@ if (string.IsNullOrWhiteSpace(connectionString) && !isMigrateCommand)
         "The connection string is missing. Set ConnectionStrings:GameOfLife, for example with the environment variable ConnectionStrings__GameOfLife.");
 }
 
-// One data source for the process, shared by the migrate command and the API; it owns the connection pool.
 builder.Services.AddSingleton(services => new NpgsqlDataSourceBuilder(connectionString)
     .UseLoggerFactory(services.GetRequiredService<ILoggerFactory>())
     .Build());
@@ -75,7 +74,6 @@ var app = builder.Build();
 
 if (isMigrateCommand)
 {
-    // Disposing the app writes out buffered log messages and closes pooled connections before the process exits.
     await using (app)
     {
         return await MigrateCommand.RunAsync(app.Services, connectionString);
@@ -104,7 +102,6 @@ if (app.Environment.IsDevelopment())
 
 app.MapBoardEndpoints();
 
-// Runs no health checks: it only shows that the process is serving requests.
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 
 // Writes no body, so UseStatusCodePages answers a 503 with problem details, as for other errors. The default writer

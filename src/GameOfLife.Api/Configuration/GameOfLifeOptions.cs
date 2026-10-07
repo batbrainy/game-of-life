@@ -4,7 +4,6 @@ using GameOfLife.Core;
 
 namespace GameOfLife.Api.Configuration;
 
-/// <summary>Limits on board size, simulation length and concurrent simulations, from the <c>GameOfLife</c> configuration section.</summary>
 public sealed class GameOfLifeOptions : IValidatableObject
 {
     public const string SectionName = "GameOfLife";
