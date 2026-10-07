@@ -3,12 +3,12 @@ namespace GameOfLife.Core.Tests;
 public sealed class FingerprintTests
 {
     [Fact]
-    public void FingerprintUsesBigEndianDimensionsAndRowMajorCellBytes()
+    public void FingerprintHashesCompactUtf8JsonOfTheMatrix()
     {
         var board = Board.FromMatrix([[1, 0, 1], [0, 1, 1]]);
 
-        // Independent SHA-256 test vector for bytes 00000002 00000003 010001000101.
-        Assert.Equal("2667A128D34FE2527845A727D109C81EE4EC2B197F2CF5B146C158A0584DF075", board.Fingerprint());
+        // Independent SHA-256 test vector for UTF-8 JSON [[1,0,1],[0,1,1]].
+        Assert.Equal("11F7A18C9FA9D32EDB80BC5E8D04AA0A48555BC63A991A578EDD459C36C63376", board.Fingerprint());
         Assert.Equal(board.Fingerprint(), Board.FromMatrix(board.ToMatrix()).Fingerprint());
     }
 

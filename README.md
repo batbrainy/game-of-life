@@ -208,7 +208,7 @@ Multiplexing is rejected because locks require session affinity. With pooling en
 
 The core owns a nested `int[][]` matrix of 0 and 1, the same representation used by HTTP and PostgreSQL JSONB. Import and export make deep copies so callers cannot mutate a board; calculation creates a new owned matrix. There is no boolean conversion or flat-array reshaping.
 
-Final keeps only SHA-256 fingerprints mapped to first-seen steps, rather than retaining every board. Each fingerprint hashes two big-endian 32-bit dimensions followed by one byte per cell in row-major order. Matching fingerprints have negligible collision risk, but are not mathematically exact board equality. The previous 32-bit dictionary hash was correct because it also checked full equality; this change simplifies storage and reduces retained history. Starting, current and next matrices are sufficient for calculation; the repeated current matrix supplies the cycle result. Limit exhaustion returns 422 without saving intermediate progress. PostgreSQL still stores the full current matrix and metadata; no schema migration is needed for this cleanup.
+Final keeps only SHA-256 fingerprints mapped to first-seen steps, rather than retaining every board. Each fingerprint hashes the matrix's compact UTF-8 JSON, which preserves row boundaries and cell order without a custom encoding. Matching fingerprints have negligible collision risk, but are not mathematically exact board equality. The previous 32-bit dictionary hash was correct because it also checked full equality; this change simplifies storage and reduces retained history. Starting, current and next matrices are sufficient for calculation; the repeated current matrix supplies the cycle result. Limit exhaustion returns 422 without saving intermediate progress. PostgreSQL still stores the full current matrix and metadata; no schema migration is needed for this cleanup.
 
 ### Upgrade an existing database
 
@@ -255,9 +255,9 @@ Defaults live in the `GameOfLife` section of [appsettings.json](src/GameOfLife.A
 | MaxSimulationCellSteps | 67108864 | Positive; bounds board size times the larger iteration limit |
 | MaxRetainedStateBytes | 536870912 (512 MiB) | Positive; bounds estimated working matrices and fingerprint history across concurrent Final runs |
 
-For each Final run, the retained-state estimate is `3 * (4 * MaxRows * MaxColumns + 32 * MaxRows + 24) + MaxColumns + 256 * (MaxFinalStateGenerations + 1)` bytes, multiplied by `MaxConcurrentSimulations`. It allows three working int matrices (starting/current/next), estimated 64-bit row-array overhead, a one-row fingerprint buffer, and 256 bytes per history entry for a 64-character hex SHA-256 string plus dictionary storage and resizing. At defaults this is about 7.2 MiB across eight simulations, instead of the previous 250.5 MiB estimate for historical bool cell buffers alone. Matrix memory grows with board size; history memory grows with the iteration limit, independently of board size.
+For each Final run, the retained-state estimate is `3 * (4 * MaxRows * MaxColumns + 32 * MaxRows + 24) + (2 * MaxRows * MaxColumns + 2 * MaxRows + 1) + 256 * (MaxFinalStateGenerations + 1)` bytes, multiplied by `MaxConcurrentSimulations`. It allows three working int matrices (starting/current/next), estimated 64-bit row-array overhead, a temporary compact JSON fingerprint buffer, and 256 bytes per history entry for a 64-character hex SHA-256 string plus dictionary storage and resizing. At defaults this is about 8.2 MiB across eight simulations, instead of the previous 250.5 MiB estimate for historical bool cell buffers alone. Matrix memory grows with board size; history memory grows with the iteration limit, independently of board size.
 
-This is an estimate, not a guarantee of total process memory or latency. It excludes JSON serialization/copies, HTTP processing, connection pools, hashing runtime overhead, and garbage waiting for collection. Integer matrices use four bytes per cell and allocate a new matrix each generation, so lower retained history does not mean lower total allocation. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
+This is an estimate, not a guarantee of total process memory or latency. It excludes serialization buffer pools, board export copies, HTTP processing, connection pools, hashing runtime overhead, and garbage waiting for collection. Integer matrices use four bytes per cell and allocate a new matrix each generation, so lower retained history does not mean lower total allocation. A legacy board or one uploaded under larger settings remains fetchable but returns 422 for simulation if it exceeds the current dimensions.
 
 For Compose overrides, add environment variables such as `GameOfLife__BoardLockTimeoutSeconds=10` under `services.api.environment` in an ignored `compose.override.yaml`, then recreate the API. Increase workload and resource budgets after measuring CPU and memory. Connection strings must parse, disable Multiplexing, and satisfy pool headroom validation.
 
@@ -305,14 +305,14 @@ rm /tmp/gameoflife-verification.yaml
 
 ### Measured costs
 
-Reference measurements after the matrix/fingerprint cleanup used the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
+Reference measurements with JSON-based fingerprints used the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
 
 | Workload | Observed duration |
 |---|---|
-| Five sequential N-ahead projections, N = 500 | 0.658–0.739 s; mean 0.696 s |
-| Five sequential full-limit Final searches | 0.631–0.746 s; mean 0.678 s |
-| Eight Final searches on different GUIDs concurrently | 0.839–0.971 s; mean 0.898 s |
-| Eight Final requests on the same GUID concurrently | Eight serialized searches returned 422 in 0.649–5.220 s; no lock timeouts in this run |
+| Five sequential N-ahead projections, N = 500 | 0.564–0.669 s; mean 0.590 s |
+| Five sequential full-limit Final searches | 0.840–0.852 s; mean 0.848 s |
+| Eight Final searches on different GUIDs concurrently | 1.122–1.199 s; mean 1.156 s |
+| Eight Final requests on the same GUID concurrently | Six serialized searches returned 422 in 0.853–5.113 s; two lock timeouts returned 503 in 5.014 s |
 
 The same-GUID requests left generation 0 and Active status unchanged. Lock timeouts remain possible under heavier contention. Lock timeout bounds acquisition, not the search after acquisition, so a completed request can take longer than five seconds. Timings are observations from one run, not latency guarantees; resource budgets also account for working matrices, fingerprint history, and concurrent requests.
 

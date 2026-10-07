@@ -1,5 +1,5 @@
-using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace GameOfLife.Core;
 
@@ -76,28 +76,8 @@ public sealed class Board
     /// <summary>Returns a deep copy of the cells, indexed [row][column].</summary>
     public int[][] ToMatrix() => CopyMatrix(_cells);
 
-    /// <summary>SHA-256 of the dimensions (two big-endian int32s) followed by row-major 0/1 bytes.</summary>
-    public string Fingerprint()
-    {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Span<byte> dimensions = stackalloc byte[8];
-        BinaryPrimitives.WriteInt32BigEndian(dimensions, Rows);
-        BinaryPrimitives.WriteInt32BigEndian(dimensions[4..], Columns);
-        hash.AppendData(dimensions);
-
-        var buffer = new byte[Columns];
-        foreach (var row in _cells)
-        {
-            for (int column = 0; column < Columns; column++)
-            {
-                buffer[column] = (byte)row[column];
-            }
-
-            hash.AppendData(buffer);
-        }
-
-        return Convert.ToHexString(hash.GetHashAndReset());
-    }
+    /// <summary>SHA-256 of the matrix's compact UTF-8 JSON, preserving row boundaries and cell order.</summary>
+    public string Fingerprint() => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(_cells)));
 
     private static int[][] CopyMatrix(int[][] cells) => cells.Select(row => row.ToArray()).ToArray();
 
