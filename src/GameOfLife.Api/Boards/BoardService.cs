@@ -41,7 +41,7 @@ public sealed class BoardService(IBoardRepository repository, IOptions<GameOfLif
             return new(state, MutationError.BoardSizeLimit);
         }
 
-        if (state.Generation > long.MaxValue - limit)
+        if (state.Generation == long.MaxValue)
         {
             return new(state, MutationError.GenerationLimit);
         }
@@ -57,6 +57,11 @@ public sealed class BoardService(IBoardRepository repository, IOptions<GameOfLif
         if (final is null)
         {
             return new(state, MutationError.IterationLimit);
+        }
+
+        if (state.Generation > long.MaxValue - final.GenerationsComputed)
+        {
+            return new(state, MutationError.GenerationLimit);
         }
 
         var completed = await session.SaveAsync(

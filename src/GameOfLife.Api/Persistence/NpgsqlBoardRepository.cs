@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
+using GameOfLife.Api.Boards;
 using GameOfLife.Core;
 
 using Npgsql;
@@ -23,7 +24,7 @@ public sealed partial class NpgsqlBoardRepository(NpgsqlDataSource dataSource, I
         command.Parameters.AddWithValue(id);
         command.Parameters.AddWithValue(board.Rows);
         command.Parameters.AddWithValue(board.Columns);
-        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(BoardJson.ToRows(board)));
+        command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(BoardMatrixMapper.ToMatrix(board)));
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -95,7 +96,7 @@ public sealed partial class NpgsqlBoardRepository(NpgsqlDataSource dataSource, I
 
     private static StoredBoard Read(NpgsqlDataReader reader) => new(
         reader.GetGuid(0),
-        BoardJson.Deserialize(reader.GetString(3), reader.GetInt32(1), reader.GetInt32(2)),
+        BoardMatrixMapper.FromMatrix(JsonSerializer.Deserialize<int[][]>(reader.GetString(3)), reader.GetInt32(1), reader.GetInt32(2)),
         reader.GetInt64(4),
         Enum.Parse<BoardStatus>(reader.GetString(5)),
         reader.GetDateTime(6),
@@ -132,7 +133,7 @@ public sealed partial class NpgsqlBoardRepository(NpgsqlDataSource dataSource, I
                 RETURNING {Columns}
                 """, connection);
             command.Parameters.AddWithValue(id);
-            command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(BoardJson.ToRows(board)));
+            command.Parameters.AddWithValue(NpgsqlDbType.Jsonb, JsonSerializer.Serialize(BoardMatrixMapper.ToMatrix(board)));
             command.Parameters.AddWithValue(generation);
             command.Parameters.AddWithValue(status.ToString());
             command.Parameters.AddWithValue(NpgsqlDbType.Bigint, (object?)cycleStartGeneration ?? DBNull.Value);

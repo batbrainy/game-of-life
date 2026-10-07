@@ -64,17 +64,8 @@ public static partial class BoardEndpoints
 
         int rows = request.Cells.Length;
         int columns = request.Cells[0].Length;
-        var cells = new bool[rows, columns];
-        for (int row = 0; row < rows; row++)
-        {
-            for (int column = 0; column < columns; column++)
-            {
-                cells[row, column] = request.Cells[row][column] == 1;
-            }
-        }
-
         var id = Guid.NewGuid();
-        await repository.AddAsync(id, Board.FromCells(cells), cancellationToken);
+        await repository.AddAsync(id, BoardMatrixMapper.FromMatrix(request.Cells, rows, columns), cancellationToken);
         LogStored(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, rows, columns);
         return TypedResults.Created($"/api/v1/boards/{id}", new UploadBoardResponse(id));
     }
@@ -158,7 +149,7 @@ public static partial class BoardEndpoints
         }
 
         var board = Simulation.Advance(state.Board, n, cancellationToken);
-        return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, BoardJson.ToRows(board), state.Generation));
+        return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, BoardMatrixMapper.ToMatrix(board), state.Generation));
     }
 
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(

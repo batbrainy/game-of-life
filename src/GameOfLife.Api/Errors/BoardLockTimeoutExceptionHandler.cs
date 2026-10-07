@@ -22,7 +22,7 @@ public sealed class BoardLockTimeoutExceptionHandler(IProblemDetailsService prob
             {
                 Status = StatusCodes.Status503ServiceUnavailable,
                 Title = "Board is busy",
-                Detail = "Another operation is updating this board. Try again shortly.",
+                Detail = "The board mutation session could not be acquired within the configured timeout. Try again shortly.",
             },
         });
     }

@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 using GameOfLife.Api.Persistence;
 using GameOfLife.Api.Persistence.Migrations;
 using GameOfLife.Core;
@@ -53,7 +55,17 @@ public sealed class NpgsqlBoardRepositoryTests(PostgresFixture postgres)
 
         await using var command = dataSource.CreateCommand("SELECT cells FROM boards WHERE id = $1");
         command.Parameters.Add(new NpgsqlParameter { Value = id });
-        Assert.Equal(board, BoardJson.Deserialize(Assert.IsType<string>(await command.ExecuteScalarAsync()), 5, 7));
+        var matrix = JsonSerializer.Deserialize<int[][]>(Assert.IsType<string>(await command.ExecuteScalarAsync()));
+        Assert.NotNull(matrix);
+        Assert.Equal(board.Rows, matrix.Length);
+        for (int row = 0; row < board.Rows; row++)
+        {
+            Assert.Equal(board.Columns, matrix[row].Length);
+            for (int column = 0; column < board.Columns; column++)
+            {
+                Assert.Equal(board[row, column] ? 1 : 0, matrix[row][column]);
+            }
+        }
     }
 
     [Fact]

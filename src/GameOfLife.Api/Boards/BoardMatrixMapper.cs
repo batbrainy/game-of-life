@@ -1,12 +1,10 @@
-using System.Text.Json;
-
 using GameOfLife.Core;
 
-namespace GameOfLife.Api.Persistence;
+namespace GameOfLife.Api.Boards;
 
-public static class BoardJson
+public static class BoardMatrixMapper
 {
-    public static int[][] ToRows(Board board)
+    public static int[][] ToMatrix(Board board)
     {
         var rows = new int[board.Rows][];
         for (int row = 0; row < board.Rows; row++)
@@ -21,12 +19,11 @@ public static class BoardJson
         return rows;
     }
 
-    public static Board Deserialize(string json, int rows, int columns)
+    public static Board FromMatrix(int[][]? cells, int rows, int columns)
     {
-        int[][]? cells = JsonSerializer.Deserialize<int[][]>(json);
         if (cells is null || cells.Length != rows || rows < 1 || columns < 1)
         {
-            throw new InvalidOperationException("The stored board has invalid dimensions.");
+            throw new InvalidOperationException("The board matrix has invalid dimensions.");
         }
 
         var values = new bool[checked(rows * columns)];
@@ -34,7 +31,7 @@ public static class BoardJson
         {
             if (cells[row] is null || cells[row].Length != columns)
             {
-                throw new InvalidOperationException("The stored board is not rectangular.");
+                throw new InvalidOperationException("The board matrix is not rectangular.");
             }
 
             for (int column = 0; column < columns; column++)
@@ -42,7 +39,7 @@ public static class BoardJson
                 int value = cells[row][column];
                 if (value is not (0 or 1))
                 {
-                    throw new InvalidOperationException("The stored board contains an invalid cell.");
+                    throw new InvalidOperationException("The board matrix contains an invalid cell.");
                 }
 
                 values[(row * columns) + column] = value == 1;

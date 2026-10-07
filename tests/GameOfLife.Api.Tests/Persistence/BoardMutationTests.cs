@@ -229,5 +229,42 @@ public sealed class BoardMutationTests(PostgresFixture postgres)
         Assert.Equal(HttpStatusCode.Conflict, projection.StatusCode);
     }
 
+    [Theory]
+    [InlineData("[[1,1],[1,1]]", long.MaxValue - 1, HttpStatusCode.OK)]
+    [InlineData("[[1]]", long.MaxValue - 1, HttpStatusCode.Conflict)]
+    [InlineData("[[1,1],[1,1]]", long.MaxValue, HttpStatusCode.Conflict)]
+    public async Task FinalChecksTheComputedStepsForGenerationOverflow(string cells, long generation, HttpStatusCode expected)
+    {
+        string connectionString = await postgres.CreateMigratedDatabaseAsync();
+        await using var pool = NpgsqlDataSource.Create(connectionString);
+        await using var factory = new ApiFactory(postgres);
+        using var configured = factory.WithSettings(("ConnectionStrings:GameOfLife", connectionString));
+        using var client = configured.CreateClient();
+        var id = await TestBoards.UploadAsync(client, cells);
+        await using (var command = pool.CreateCommand("UPDATE boards SET generation = $1 WHERE id = $2"))
+        {
+            command.Parameters.AddWithValue(generation);
+            command.Parameters.AddWithValue(id);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var before = await Repository(pool).FindAsync(id, CancellationToken.None);
+        using var response = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(expected, response.StatusCode);
+        var after = await Repository(pool).FindAsync(id, CancellationToken.None);
+        if (expected == HttpStatusCode.OK)
+        {
+            Assert.NotNull(after);
+            Assert.Equal(long.MaxValue, after.Generation);
+            Assert.Equal(generation, after.CycleStartGeneration);
+            Assert.Equal(BoardStatus.Stable, after.Status);
+            Assert.Equal(before?.Board, after.Board);
+        }
+        else
+        {
+            Assert.Equal(before, after);
+        }
+    }
+
     private static NpgsqlBoardRepository Repository(NpgsqlDataSource source) => new(source, NullLogger<NpgsqlBoardRepository>.Instance);
 }

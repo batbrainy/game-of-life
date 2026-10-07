@@ -160,7 +160,7 @@ Next increments the generation and leaves status Active. Stable and Cycle are te
 
 `GameOfLife.Core` contains the immutable Board, Conway rules, and in-memory simulation. It has no HTTP or database dependencies. Each step reads the previous buffer and allocates a separate next buffer. Internally the engine uses bool arrays; the API and persisted JSON matrix use integer 0/1 rows.
 
-PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, creation/update/completion timestamps, and optional cycle-start generation and length. `BoardJson` serializes/deserializes `int[][]`. Complete matrix validation happens at application boundaries, including loading stored data; database constraints also check basic JSON shape, dimensions, generation, and terminal metadata. Historical matrices and hashes are not persisted.
+PostgreSQL stores one current row per GUID: dimensions, JSONB matrix, generation (bigint), status, creation/update/completion timestamps, and optional cycle-start generation and length. `BoardMatrixMapper` converts between the immutable Board and `int[][]`; the repository owns JSON serialization/deserialization. Complete matrix validation happens at application boundaries, including loading stored data; database constraints also check basic JSON shape, dimensions, generation, and terminal metadata. Historical matrices and hashes are not persisted.
 
 `BoardService` coordinates mutations through `IBoardMutationSession`. `NpgsqlBoardRepository` owns the session-level PostgreSQL advisory lock and its connection:
 
@@ -253,7 +253,7 @@ scripts/verify-restart.sh
 
 ### Verification and measurements
 
-The current implementation passed 263 tests (92 core and 171 API/configuration/PostgreSQL), a warning-free .NET 8 build, formatting verification, 19 Docker smoke checks, and 13 restart/crash checks. Configuration tests cover overrides above the former fixed ceilings, budget boundaries, positive values, and arithmetic/runtime limits. The restart checks cover API restart, abrupt API termination, abrupt PostgreSQL termination, and container recreation while retaining the database volume.
+The current implementation passed 266 tests (92 core and 174 API/configuration/PostgreSQL), a warning-free .NET 8 build, formatting verification, 19 Docker smoke checks, and 13 restart/crash checks. Configuration tests cover overrides above the former fixed ceilings, budget boundaries, positive values, and arithmetic/runtime limits. Final-state tests also verify that generation overflow depends on computed steps rather than the configured search budget. The restart checks cover API restart, abrupt API termination, abrupt PostgreSQL termination, and container recreation while retaining the database volume.
 
 Measured with the Release Docker image on an Apple M1 Max with 64 GiB RAM; Docker had 10 CPUs and 7.7 GiB. Defaults were 256 by 256 cells, 500 steps, eight admitted simulations, and a five-second lock-acquisition timeout. The deterministic pattern in `measure-worst-case.sh` exhausts Final's limit, so these measurements include a complete search rather than replaying a saved terminal result.
 
