@@ -1,6 +1,6 @@
 #!/bin/sh
-# Checks that a stored board survives restarts and crashes of the Docker Compose stack. It uploads a board and
-# saves its GET body; then, after each step (restart api, kill api, kill db, down and up), it waits for
+# Checks that an advanced board and a terminal board survive restarts and crashes of the Docker Compose stack.
+# Saves their current-state bodies; then, after each step (restart api, kill api, kill db, down and up), it waits for
 # /health/ready and requires exactly the same body. It restarts, kills and recreates this project's containers.
 # Usage: scripts/verify-restart.sh [base-url]    (base-url defaults to http://localhost:8080; the stack must be up)
 # Prints PASS or FAIL for each step and a summary, and exits non-zero when any step fails. If the upload or the
@@ -68,11 +68,11 @@ wait_until_ready() {
 # connection is dropped. So a 503, and only a 503, is retried, up to 5 tries in all. The other steps start a new
 # API process with an empty pool and need no retry, but fetching the same way in every step keeps the steps alike.
 fetch_board() {
-    response=$(request "$board_url")
+    response=$(request "${1:-$board_url}")
     tries=1
     while [ "$(status_of "$response")" = 503 ] && [ "$tries" -lt 5 ]; do
         sleep 1
-        response=$(request "$board_url")
+        response=$(request "${1:-$board_url}")
         tries=$((tries + 1))
     done
     printf '%s\n' "$response"
@@ -88,7 +88,8 @@ check_step() {
         printf 'FAIL %s: /health/ready did not return 200 within 60 tries\n' "$1"
         failed=$((failed + 1))
     else
-        check "$1" "$(fetch_board)" 200 "$saved_body"
+        check "$1 active board" "$(fetch_board)" 200 "$saved_body"
+        check "$1 terminal board" "$(fetch_board "$terminal_url")" 200 "$terminal_body"
     fi
 }
 
@@ -97,9 +98,17 @@ response=$(request --header 'Content-Type: application/json' --data-binary '{"ce
 check 'upload a board' "$response" 201
 board_url=$base_url/api/v1/boards/$(id_of "$response")
 
+response=$(request --request POST "$board_url/next")
+check 'advance the board' "$response" 200
 response=$(request "$board_url")
 check 'fetch the board' "$response" 200
 saved_body=$(body_of "$response")
+response=$(request --header 'Content-Type: application/json' --data-binary '{"cells":[[0,1,0],[0,1,0],[0,1,0]]}' "$base_url/api/v1/boards")
+check 'upload a terminal candidate' "$response" 201
+terminal_url=$base_url/api/v1/boards/$(id_of "$response")
+response=$(request --request POST "$terminal_url/final")
+check 'persist the final state' "$response" 200
+terminal_body=$(body_of "$response")
 if [ "$failed" -gt 0 ]; then
     echo "$passed passed, $failed failed"
     exit 1

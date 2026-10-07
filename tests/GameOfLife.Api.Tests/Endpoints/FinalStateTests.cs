@@ -1,221 +1,116 @@
-using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 
-using GameOfLife.Api.Configuration;
-
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Logging;
+using GameOfLife.Api.Endpoints;
 
 namespace GameOfLife.Api.Tests.Endpoints;
 
 [Collection(PostgresFixture.CollectionName)]
 public sealed class FinalStateTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
-    private const string Glider = ".#./..#/###";
-    private const string RPentomino = ".##/##./.#.";
-
-    [Fact]
-    public async Task BlockIsAStillLifeFromGenerationZero()
+    [Theory]
+    [InlineData("[[1,1],[1,1]]", "Stable", 1, 0, 1)]
+    [InlineData("[[0,1,0],[0,1,0],[0,1,0]]", "Cycle", 2, 0, 2)]
+    [InlineData("[[1]]", "Stable", 2, 1, 1)]
+    public async Task FinalPersistsDetectionGenerationAndTerminalMetadata(string cells, string status, long generation, long cycleStart, int period)
     {
         using var client = factory.CreateClient();
-        string block = TestBoards.CellsJson(4, 4, 1, 1, "##/##");
-        var id = await TestBoards.UploadAsync(client, block);
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
+        var id = await TestBoards.UploadAsync(client, cells);
+        using var response = await client.PostAsync($"/api/v1/boards/{id}/final", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":0,"period":1,"rows":4,"columns":4,"cells":{{block}}}""",
-            await response.Content.ReadAsStringAsync());
+        var final = await response.Content.ReadFromJsonAsync<BoardStateResponse>();
+        Assert.NotNull(final);
+        Assert.Equal(status, final.Status);
+        Assert.Equal(generation, final.Generation);
+        Assert.Equal(cycleStart, final.CycleStartGeneration);
+        Assert.Equal(period, final.Period);
+        using var fetch = await client.GetAsync($"/api/v1/boards/{id}");
+        Assert.Equal(await response.Content.ReadAsStringAsync(), await fetch.Content.ReadAsStringAsync());
+        using var again = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(await response.Content.ReadAsStringAsync(), await again.Content.ReadAsStringAsync());
+        using var rejected = await client.PostAsync($"/api/v1/boards/{id}/next", null);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        using var problem = JsonDocument.Parse(await rejected.Content.ReadAsStringAsync());
+        Assert.Equal(status, problem.RootElement.GetProperty("boardStatus").GetString());
+        Assert.Equal($"/api/v1/boards/{id}", problem.RootElement.GetProperty("finalStateUrl").GetString());
     }
 
     [Fact]
-    public async Task VerticalBlinkerOscillatesWithPeriodTwoFromGenerationZero()
+    public async Task FinalStartsAtCurrentGenerationAndTerminalStateSurvivesANewHost()
     {
-        using var client = factory.CreateClient();
-        string blinker = TestBoards.CellsJson(3, 3, 0, 1, "#/#/#");
-        var id = await TestBoards.UploadAsync(client, blinker);
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":0,"period":2,"rows":3,"columns":3,"cells":{{blinker}}}""",
-            await response.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
-    public async Task GliderOnATenByTenBoardSettlesAsABlockInTheBottomRightCornerAtGeneration31()
-    {
-        using var client = factory.CreateClient();
-        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(10, 10, 0, 0, Glider));
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        string block = TestBoards.CellsJson(10, 10, 8, 8, "##/##");
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":31,"period":1,"rows":10,"columns":10,"cells":{{block}}}""",
-            await response.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
-    public async Task SingleCellDiesAndTheEmptyBoardIsAStillLifeFromGenerationOne()
-    {
-        using var client = factory.CreateClient();
-        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(3, 3, 1, 1, "#"));
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":1,"period":1,"rows":3,"columns":3,"cells":[[0,0,0],[0,0,0],[0,0,0]]}""",
-            await response.Content.ReadAsStringAsync());
-    }
-
-    // The other boards in this class are square, so swapping the rows and columns values would not fail them.
-    [Fact]
-    public async Task BlockOnAFourBySixBoardReturnsFourRowsAndSixColumns()
-    {
-        using var client = factory.CreateClient();
-        string block = TestBoards.CellsJson(4, 6, 1, 2, "##/##");
-        var id = await TestBoards.UploadAsync(client, block);
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":0,"period":1,"rows":4,"columns":6,"cells":{{block}}}""",
-            await response.Content.ReadAsStringAsync());
-    }
-
-    // The glider is a block from generation 31, but only generation 32 repeats it, so the search needs a limit of 32.
-    [Fact]
-    public async Task GliderWithALimitOf31GenerationsReturnsUnprocessableEntityProblemDetails()
-    {
-        using var limitedFactory = factory.WithSettings(("GameOfLife:MaxFinalStateGenerations", "31"));
-        using var client = limitedFactory.CreateClient();
-        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(10, 10, 0, 0, Glider));
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        await AssertNoFinalStateProblemAsync(response, maxGenerations: 31);
-    }
-
-    [Fact]
-    public async Task GliderWithALimitOf32GenerationsReturnsTheBlock()
-    {
-        using var limitedFactory = factory.WithSettings(("GameOfLife:MaxFinalStateGenerations", "32"));
-        using var client = limitedFactory.CreateClient();
-        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(10, 10, 0, 0, Glider));
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        string block = TestBoards.CellsJson(10, 10, 8, 8, "##/##");
-        Assert.Equal(
-            $$"""{"id":"{{id}}","generation":31,"period":1,"rows":10,"columns":10,"cells":{{block}}}""",
-            await response.Content.ReadAsStringAsync());
-    }
-
-    // The R-pentomino's cycle on this board starts at generation 1163 with period 2, so it first repeats at 1165; the
-    // test needs a default limit below that.
-    [Fact]
-    public async Task RPentominoOnA68By68BoardReturnsUnprocessableEntityProblemDetailsAtTheDefaultLimit()
-    {
-        int defaultLimit = new GameOfLifeOptions().MaxFinalStateGenerations;
-        using var client = factory.CreateClient();
-        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(68, 68, 32, 32, RPentomino));
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        await AssertNoFinalStateProblemAsync(response, defaultLimit);
-    }
-
-    [Fact]
-    public async Task BoardThatDoesNotSettleIsLoggedAtInformationWithItsIdAndTheLimitButOneThatSettlesIsNot()
-    {
-        var logs = new RecordingLoggerProvider();
-        using var limitedFactory = factory.WithWebHostBuilder(builder =>
+        Guid id;
+        string completed;
+        using (var first = factory.WithSettings())
         {
-            builder.UseSetting("GameOfLife:MaxFinalStateGenerations", "31");
-            builder.ConfigureLogging(logging => logging.AddProvider(logs));
-        });
-        using var client = limitedFactory.CreateClient();
-        var gliderId = await TestBoards.UploadAsync(client, TestBoards.CellsJson(10, 10, 0, 0, Glider));
-        var blockId = await TestBoards.UploadAsync(client, TestBoards.CellsJson(4, 4, 1, 1, "##/##"));
-
-        using var gliderResponse = await client.GetAsync($"/api/v1/boards/{gliderId}/final");
-        using var blockResponse = await client.GetAsync($"/api/v1/boards/{blockId}/final");
-
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, gliderResponse.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, blockResponse.StatusCode);
-        Assert.Contains($"Information: Board {gliderId} did not repeat an earlier generation within 31 generations", logs.Messages);
-        Assert.DoesNotContain(logs.Messages, message => message.Contains($"Board {blockId} did not repeat"));
-    }
-
-    [Fact]
-    public async Task UnknownIdReturnsNotFoundProblemDetails()
-    {
-        using var client = factory.CreateClient();
-        var id = Guid.NewGuid();
-
-        using var response = await client.GetAsync($"/api/v1/boards/{id}/final");
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("Board not found", problem.RootElement.GetProperty("title").GetString());
-        Assert.Equal(404, problem.RootElement.GetProperty("status").GetInt32());
-        Assert.Contains(id.ToString(), problem.RootElement.GetProperty("detail").GetString());
-    }
-
-    // ASP.NET Core itself rejects an id that does not parse as a GUID, before the handler runs.
-    [Fact]
-    public async Task MalformedIdReturnsBadRequestProblemDetails()
-    {
-        using var client = factory.CreateClient();
-
-        using var response = await client.GetAsync("/api/v1/boards/not-a-guid/final");
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("Bad Request", problem.RootElement.GetProperty("title").GetString());
-        Assert.Equal(400, problem.RootElement.GetProperty("status").GetInt32());
-    }
-
-    private static async Task AssertNoFinalStateProblemAsync(HttpResponseMessage response, int maxGenerations)
-    {
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("Board did not reach a final state", problem.RootElement.GetProperty("title").GetString());
-        Assert.Equal(422, problem.RootElement.GetProperty("status").GetInt32());
-        Assert.Contains($"{maxGenerations}", problem.RootElement.GetProperty("detail").GetString());
-        Assert.Equal(maxGenerations, problem.RootElement.GetProperty("maxGenerations").GetInt32());
-    }
-
-    // Keeps every message the host logs as "Level: message". A concurrent queue, because the host can log from
-    // several threads at once.
-    private sealed class RecordingLoggerProvider : ILoggerProvider, ILogger
-    {
-        public ConcurrentQueue<string> Messages { get; } = new();
-
-        public ILogger CreateLogger(string categoryName) => this;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            Messages.Enqueue($"{logLevel}: {formatter(state, exception)}");
-
-        public void Dispose()
-        {
+            using var client = first.CreateClient();
+            id = await TestBoards.UploadAsync(client, "[[0,1,0],[0,1,0],[0,1,0]]");
+            using var next = await client.PostAsync($"/api/v1/boards/{id}/next", null);
+            next.EnsureSuccessStatusCode();
+            using var final = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+            var state = await final.Content.ReadFromJsonAsync<BoardStateResponse>();
+            Assert.NotNull(state);
+            Assert.Equal(3, state.Generation);
+            Assert.Equal(1, state.CycleStartGeneration);
+            Assert.Equal("[[0,0,0],[1,1,1],[0,0,0]]", JsonSerializer.Serialize(state.Cells));
+            completed = await final.Content.ReadAsStringAsync();
         }
+
+        using var second = factory.WithSettings();
+        using var secondClient = second.CreateClient();
+        using var fetched = await secondClient.GetAsync($"/api/v1/boards/{id}");
+        Assert.Equal(completed, await fetched.Content.ReadAsStringAsync());
+        using var nextAfterRestart = await secondClient.PostAsync($"/api/v1/boards/{id}/next", null);
+        Assert.Equal(HttpStatusCode.Conflict, nextAfterRestart.StatusCode);
+    }
+
+    [Fact]
+    public async Task IterationLimitSavesNoPartialProgressAndReleasesLock()
+    {
+        using var limited = factory.WithSettings(("GameOfLife:MaxFinalStateGenerations", "1"));
+        using var client = limited.CreateClient();
+        var id = await TestBoards.UploadAsync(client, "[[1]]");
+        using var initial = await client.GetAsync($"/api/v1/boards/{id}");
+        using var failed = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, failed.StatusCode);
+        using var problem = JsonDocument.Parse(await failed.Content.ReadAsStringAsync());
+        Assert.Equal(1, problem.RootElement.GetProperty("maxGenerations").GetInt32());
+        using var after = await client.GetAsync($"/api/v1/boards/{id}");
+        Assert.Equal(await initial.Content.ReadAsStringAsync(), await after.Content.ReadAsStringAsync());
+        using var next = await client.PostAsync($"/api/v1/boards/{id}/next", null);
+        Assert.Equal(HttpStatusCode.OK, next.StatusCode);
+        using var final = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(HttpStatusCode.OK, final.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(31, HttpStatusCode.UnprocessableEntity)]
+    [InlineData(32, HttpStatusCode.OK)]
+    public async Task TransientPatternNeedsTheDetectionStepWithinTheLimit(int limit, HttpStatusCode expected)
+    {
+        using var bounded = factory.WithSettings(("GameOfLife:MaxFinalStateGenerations", limit.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        using var client = bounded.CreateClient();
+        var id = await TestBoards.UploadAsync(client, TestBoards.CellsJson(10, 10, 0, 0, ".#./..#/###"));
+        using var final = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(expected, final.StatusCode);
+        if (expected == HttpStatusCode.OK)
+        {
+            var state = await final.Content.ReadFromJsonAsync<BoardStateResponse>();
+            Assert.NotNull(state);
+            Assert.Equal(32, state.Generation);
+            Assert.Equal(31, state.CycleStartGeneration);
+            Assert.Equal("Stable", state.Status);
+        }
+    }
+
+    [Theory]
+    [InlineData("not-a-guid", HttpStatusCode.BadRequest)]
+    [InlineData("00000000-0000-0000-0000-000000000000", HttpStatusCode.NotFound)]
+    public async Task InvalidOrUnknownIdsReturnProblemDetails(string id, HttpStatusCode expected)
+    {
+        using var client = factory.CreateClient();
+        using var response = await client.PostAsync($"/api/v1/boards/{id}/final", null);
+        Assert.Equal(expected, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 }

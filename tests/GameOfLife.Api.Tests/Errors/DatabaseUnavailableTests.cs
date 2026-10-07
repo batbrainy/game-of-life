@@ -98,6 +98,8 @@ public sealed class DatabaseUnavailableTests(ApiFactory factory) : IClassFixture
     {
         public Task AddAsync(Guid id, Board board, CancellationToken cancellationToken) => throw exception;
 
-        public Task<Board?> FindAsync(Guid id, CancellationToken cancellationToken) => throw exception;
+        public Task<IBoardMutationSession> LockAsync(Guid id, TimeSpan timeout, CancellationToken cancellationToken) => throw exception;
+
+        public Task<StoredBoard?> FindAsync(Guid id, CancellationToken cancellationToken) => throw exception;
     }
 }

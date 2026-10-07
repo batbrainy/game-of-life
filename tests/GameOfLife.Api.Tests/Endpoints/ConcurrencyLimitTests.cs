@@ -29,10 +29,10 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var repository = new HoldingBoardRepository(requestsToHold: 1);
         using var boundedFactory = WithBound(1, repository);
         using var client = boundedFactory.CreateClient();
-        var heldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
+        var heldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
         await repository.Entered.WaitAsync(TimeLimit);
 
-        using var response = await client.GetAsync($"/api/v1/boards/{Guid.NewGuid()}/{simulation}").WaitAsync(TimeLimit);
+        using var response = await SendSimulationAsync(client, $"/api/v1/boards/{Guid.NewGuid()}/{simulation}", simulation).WaitAsync(TimeLimit);
         repository.Release();
         using var heldResponse = await heldRequest.WaitAsync(TimeLimit);
 
@@ -52,10 +52,10 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var repository = new HoldingBoardRepository(requestsToHold: 1);
         using var boundedFactory = WithBound(1, repository);
         using var client = boundedFactory.CreateClient();
-        var heldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
+        var heldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
         await repository.Entered.WaitAsync(TimeLimit);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/boards/{Guid.NewGuid()}/final");
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/boards/{Guid.NewGuid()}/final");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
         using var response = await client.SendAsync(request).WaitAsync(TimeLimit);
         repository.Release();
@@ -72,7 +72,7 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var repository = new HoldingBoardRepository(requestsToHold: 1);
         using var boundedFactory = WithBound(1, repository);
         using var client = boundedFactory.CreateClient();
-        var heldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
+        var heldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
         await repository.Entered.WaitAsync(TimeLimit);
 
         using var upload = new StringContent("""{ "cells": [[1,1],[1,1]] }""", Encoding.UTF8, "application/json");
@@ -93,13 +93,13 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var repository = new HoldingBoardRepository(requestsToHold: 1);
         using var boundedFactory = WithBound(1, repository);
         using var client = boundedFactory.CreateClient();
-        var heldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
+        var heldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
         await repository.Entered.WaitAsync(TimeLimit);
-        using var whileHeld = await client.GetAsync($"/api/v1/boards/{Guid.NewGuid()}/final").WaitAsync(TimeLimit);
+        using var whileHeld = await client.PostAsync($"/api/v1/boards/{Guid.NewGuid()}/final", null).WaitAsync(TimeLimit);
         repository.Release();
         using var heldResponse = await heldRequest.WaitAsync(TimeLimit);
 
-        using var afterwards = await client.GetAsync($"/api/v1/boards/{Guid.NewGuid()}/final").WaitAsync(TimeLimit);
+        using var afterwards = await client.PostAsync($"/api/v1/boards/{Guid.NewGuid()}/final", null).WaitAsync(TimeLimit);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, whileHeld.StatusCode);
         Assert.Equal(HttpStatusCode.OK, heldResponse.StatusCode);
@@ -114,11 +114,11 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var repository = new HoldingBoardRepository(requestsToHold: 2);
         using var boundedFactory = WithBound(2, repository);
         using var client = boundedFactory.CreateClient();
-        var firstHeldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
-        var secondHeldRequest = client.GetAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final");
+        var firstHeldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
+        var secondHeldRequest = client.PostAsync($"/api/v1/boards/{HoldingBoardRepository.HeldId}/final", null);
         await repository.Entered.WaitAsync(TimeLimit);
 
-        using var thirdResponse = await client.GetAsync($"/api/v1/boards/{Guid.NewGuid()}/final").WaitAsync(TimeLimit);
+        using var thirdResponse = await client.PostAsync($"/api/v1/boards/{Guid.NewGuid()}/final", null).WaitAsync(TimeLimit);
         repository.Release();
         using var firstHeldResponse = await firstHeldRequest.WaitAsync(TimeLimit);
         using var secondHeldResponse = await secondHeldRequest.WaitAsync(TimeLimit);
@@ -136,6 +136,9 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
         var exception = Assert.Throws<OptionsValidationException>(() => invalidFactory.CreateClient());
         Assert.Contains("MaxConcurrentSimulations", exception.Message);
     }
+
+    private static Task<HttpResponseMessage> SendSimulationAsync(HttpClient client, string url, string operation) =>
+        operation.StartsWith("generations/", StringComparison.Ordinal) ? client.GetAsync(url) : client.PostAsync(url, null);
 
     // A copy of this class's host that handles at most the given number of simulation requests at once and reads
     // boards from the given repository.
@@ -168,7 +171,21 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
 
         public Task AddAsync(Guid id, Board board, CancellationToken cancellationToken) => Task.CompletedTask;
 
-        public async Task<Board?> FindAsync(Guid id, CancellationToken cancellationToken)
+        public Task<IBoardMutationSession> LockAsync(Guid id, TimeSpan timeout, CancellationToken cancellationToken) =>
+            Task.FromResult<IBoardMutationSession>(new HoldingSession(this, id));
+
+        private sealed class HoldingSession(HoldingBoardRepository repository, Guid id) : IBoardMutationSession
+        {
+            public Task<StoredBoard?> FindAsync(CancellationToken cancellationToken) => repository.FindAsync(id, cancellationToken);
+
+            public Task<StoredBoard> SaveAsync(Board board, long generation, BoardStatus status, long? cycleStartGeneration, int? period,
+                CancellationToken cancellationToken) => Task.FromResult(new StoredBoard(
+                    id, board, generation, status, DateTime.UnixEpoch, DateTime.UnixEpoch, null, cycleStartGeneration, period));
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+
+        public async Task<StoredBoard?> FindAsync(Guid id, CancellationToken cancellationToken)
         {
             if (id == HeldId)
             {
@@ -182,7 +199,7 @@ public sealed class ConcurrencyLimitTests(ApiFactory factory) : IClassFixture<Ap
                 await _released.Task.WaitAsync(TimeLimit, cancellationToken);
             }
 
-            return Block;
+            return new StoredBoard(id, Block, 0, BoardStatus.Active, DateTime.UnixEpoch, DateTime.UnixEpoch);
         }
     }
 }

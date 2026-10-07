@@ -23,7 +23,7 @@ public sealed class FetchBoardTests(ApiFactory factory) : IClassFixture<ApiFacto
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal(
-            $$"""{"id":"{{id}}","generation":0,"rows":2,"columns":3,"cells":[[1,1,0],[0,0,1]]}""",
+            $$"""{"id":"{{id}}","generation":0,"rows":2,"columns":3,"cells":[[1,1,0],[0,0,1]],"status":"Active"}""",
             await response.Content.ReadAsStringAsync());
     }
 

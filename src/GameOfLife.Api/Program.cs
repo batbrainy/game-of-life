@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 
+using GameOfLife.Api.Boards;
 using GameOfLife.Api.Configuration;
 using GameOfLife.Api.Endpoints;
 using GameOfLife.Api.Errors;
@@ -29,14 +30,21 @@ builder.Services.AddSingleton(services => new NpgsqlDataSourceBuilder(connection
     .UseLoggerFactory(services.GetRequiredService<ILoggerFactory>())
     .Build());
 builder.Services.AddSingleton<IBoardRepository, NpgsqlBoardRepository>();
+builder.Services.AddSingleton<BoardService>();
 
 builder.Services.AddOptions<GameOfLifeOptions>()
     .BindConfiguration(GameOfLifeOptions.SectionName)
     .ValidateDataAnnotations()
+    .Validate(_ => !new NpgsqlConnectionStringBuilder(connectionString).Multiplexing,
+        "Multiplexing must be disabled because advisory locks belong to one PostgreSQL session.")
+    .Validate(limits => !new NpgsqlConnectionStringBuilder(connectionString).Pooling
+        || new NpgsqlConnectionStringBuilder(connectionString).MaxPoolSize >= (long)limits.MaxConcurrentSimulations + 2,
+        "Maximum Pool Size must leave at least two connections beyond MaxConcurrentSimulations for other requests.")
     .ValidateOnStart();
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DatabaseUnavailableExceptionHandler>();
+builder.Services.AddExceptionHandler<BoardLockTimeoutExceptionHandler>();
 // The default is to throw in Development and return 400 elsewhere; return 400 everywhere.
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = false);
 // Rejects numbers sent as strings, such as "1", instead of converting them.
@@ -74,11 +82,8 @@ if (isMigrateCommand)
     }
 }
 
-// Each running simulation keeps a thread-pool thread busy until it ends. By default the pool's minimum number of
-// worker threads is the processor count, the same as the default MaxConcurrentSimulations, and once that many are
-// busy the pool can wait for running work to finish before it adds a thread. Raising the minimum to the bound plus
-// one thread per processor lets other requests, including those answered with 503 and the health checks, get a
-// thread at once.
+// Simulation occupies worker threads. Leave additional workers for health checks and overload responses
+// without waiting for the pool to grow; retain a higher minimum supplied by the host.
 int simulationBound = app.Services.GetRequiredService<IOptions<GameOfLifeOptions>>().Value.MaxConcurrentSimulations;
 int neededMinimum = Environment.ProcessorCount + simulationBound;
 ThreadPool.GetMinThreads(out int currentMinimum, out int completionPortMinimum);

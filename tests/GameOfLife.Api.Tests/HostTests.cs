@@ -85,7 +85,8 @@ public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
 
         int minimum = MinimumWorkerThreadsAfterStartup(defaultFactory, startingMinimum: Environment.ProcessorCount);
 
-        Assert.Equal(Environment.ProcessorCount + new GameOfLifeOptions().MaxConcurrentSimulations, minimum);
+        var configured = defaultFactory.Services.GetRequiredService<IOptions<GameOfLifeOptions>>().Value;
+        Assert.Equal(Environment.ProcessorCount + configured.MaxConcurrentSimulations, minimum);
     }
 
     [Fact]
@@ -126,6 +127,26 @@ public sealed class HostTests(ApiFactory factory) : IClassFixture<ApiFactory>
         {
             ThreadPool.SetMinThreads(originalMinimum, completionPortMinimum);
         }
+    }
+
+    [Theory]
+    [InlineData("GameOfLife:MaxConcurrentSimulations", "2147483647")]
+    [InlineData("GameOfLife:BoardLockTimeoutSeconds", "0")]
+    [InlineData("GameOfLife:MaxRows", "1024")]
+    [InlineData("GameOfLife:MaxFinalStateGenerations", "10000")]
+    public void UnsafeConfigurationFailsAtStartup(string setting, string value)
+    {
+        using var invalid = factory.WithSettings((setting, value));
+        Assert.Throws<OptionsValidationException>(() => invalid.CreateClient());
+    }
+
+    [Theory]
+    [InlineData("Multiplexing=true")]
+    [InlineData("Maximum Pool Size=1")]
+    public void ConnectionSettingsMustSupportExclusiveSessions(string setting)
+    {
+        using var invalid = factory.WithSettings(("ConnectionStrings:GameOfLife", $"Host=localhost;Username=unused;{setting}"));
+        Assert.Throws<OptionsValidationException>(() => invalid.CreateClient());
     }
 
     // Added after the application's own pipeline, so its exception travels back through the

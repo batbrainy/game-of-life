@@ -117,21 +117,30 @@ check 'upload the glider' "$response" 201
 glider_id=$(id_of "$response")
 
 response=$(request "$boards_url/$blinker_id")
-expected=$(printf '{"id":"%s","generation":0,"rows":3,"columns":3,"cells":%s}' "$blinker_id" "$vertical_blinker")
+expected=$(printf '{"id":"%s","generation":0,"rows":3,"columns":3,"cells":%s,"status":"Active"}' "$blinker_id" "$vertical_blinker")
 check 'fetch the blinker' "$response" 200 "$expected"
 
-response=$(request "$boards_url/$blinker_id/next")
-expected=$(printf '{"id":"%s","generation":1,"rows":3,"columns":3,"cells":%s}' "$blinker_id" "$horizontal_blinker")
+response=$(request --request POST "$boards_url/$blinker_id/next")
+expected=$(printf '{"id":"%s","generation":1,"rows":3,"columns":3,"cells":%s,"status":"Active"}' "$blinker_id" "$horizontal_blinker")
 check 'next generation of the blinker' "$response" 200 "$expected"
+check 'next generation is persisted' "$(request "$boards_url/$blinker_id")" 200 "$expected"
+projection=$(request "$boards_url/$blinker_id/generations/1")
+projected=$(printf '{"id":"%s","generation":2,"rows":3,"columns":3,"cells":%s,"sourceGeneration":1}' "$blinker_id" "$vertical_blinker")
+check 'projection starts from current generation' "$projection" 200 "$projected"
+check 'projection leaves current state unchanged' "$(request "$boards_url/$blinker_id")" 200 "$expected"
 
 response=$(request "$boards_url/$glider_id/generations/4")
-expected=$(printf '{"id":"%s","generation":4,"rows":10,"columns":10,"cells":%s}' "$glider_id" "$glider_moved")
+expected=$(printf '{"id":"%s","generation":4,"rows":10,"columns":10,"cells":%s,"sourceGeneration":0}' "$glider_id" "$glider_moved")
 check 'glider 4 generations ahead' "$response" 200 "$expected"
 
-response=$(request "$boards_url/$glider_id/final")
-expected=$(printf '{"id":"%s","generation":31,"period":1,"rows":10,"columns":10,"cells":%s}' \
+response=$(request --request POST "$boards_url/$glider_id/final")
+expected=$(printf '{"id":"%s","generation":32,"rows":10,"columns":10,"cells":%s,"status":"Stable","cycleStartGeneration":31,"period":1}' \
     "$glider_id" "$block_in_corner")
 check 'final state of the glider' "$response" 200 "$expected"
+check 'final state is persisted' "$(request "$boards_url/$glider_id")" 200 "$expected"
+check 'repeated final returns saved state' "$(request --request POST "$boards_url/$glider_id/final")" 200 "$expected"
+check_title 'terminal board rejects next' "$(request --request POST "$boards_url/$glider_id/next")" 409 'Board is terminal'
+check 'GET cannot advance a board' "$(request "$boards_url/$blinker_id/next")" 405
 
 response=$(upload '{"cells":[[0,1,0],[0,1]]}')
 check 'ragged board returns 400' "$response" 400
@@ -150,12 +159,12 @@ check 'upload the 68 x 68 R-pentomino' "$response" 201
 r_pentomino_id=$(id_of "$response")
 
 # On this board the R-pentomino first repeats a generation at 1165, beyond the default limit of 500.
-response=$(request "$boards_url/$r_pentomino_id/final")
+response=$(request --request POST "$boards_url/$r_pentomino_id/final")
 check 'final state of the R-pentomino returns 422' "$response" 422
 
 # 1025 KiB of spaces: just over the 1 MiB request body limit.
 response=$(dd if=/dev/zero bs=1024 count=1025 2>/dev/null | tr '\0' ' ' | upload @-)
-check 'body over 1 MB returns 413' "$response" 413
+check 'body over 1 MiB returns 413' "$response" 413
 
 echo "$passed passed, $failed failed"
 if [ "$failed" -gt 0 ]; then

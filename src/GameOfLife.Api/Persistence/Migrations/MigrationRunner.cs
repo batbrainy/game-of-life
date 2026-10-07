@@ -8,7 +8,7 @@ namespace GameOfLife.Api.Persistence.Migrations;
 public sealed partial class MigrationRunner(NpgsqlDataSource dataSource, ILogger<MigrationRunner> logger)
 {
     // Key of the transaction-level advisory lock every run takes first, so overlapping runs against
-    // one database queue instead of interleaving. Any fixed value works: nothing else takes advisory locks.
+    // one database queue instead of interleaving. This positive key is separate from negative board-lock keys.
     private const long AdvisoryLockKey = 7_142_385_901;
 
     private const string CreateHistoryTableSql = """

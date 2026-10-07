@@ -37,7 +37,9 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
         var id = body.RootElement.GetProperty("id").GetGuid();
         Assert.EndsWith($"/api/v1/boards/{id}", response.Headers.Location?.OriginalString);
         var repository = factory.Services.GetRequiredService<IBoardRepository>();
-        Assert.Equal(glider, await repository.FindAsync(id, CancellationToken.None));
+        var stored = await repository.FindAsync(id, CancellationToken.None);
+        Assert.NotNull(stored);
+        Assert.Equal(glider, stored.Board);
     }
 
     [Theory]
@@ -109,6 +111,17 @@ public sealed class UploadBoardTests(ApiFactory factory) : IClassFixture<ApiFact
 
         using var response = await PostJsonAsync(client, DeadGridJson(LoweredMaxRows, LoweredMaxColumns));
 
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(2048, 1)]
+    [InlineData(1, 2048)]
+    public async Task ConfiguredDimensionsCanExceedTheFormerHardcodedCeiling(int rows, int columns)
+    {
+        using var configured = factory.WithSettings(("GameOfLife:MaxRows", $"{rows}"), ("GameOfLife:MaxColumns", $"{columns}"));
+        using var client = configured.CreateClient();
+        using var response = await PostJsonAsync(client, DeadGridJson(rows, columns));
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 

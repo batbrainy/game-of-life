@@ -1,3 +1,4 @@
+using GameOfLife.Api.Boards;
 using GameOfLife.Api.Configuration;
 using GameOfLife.Api.Persistence;
 using GameOfLife.Core;
@@ -7,59 +8,54 @@ using Microsoft.Extensions.Options;
 
 namespace GameOfLife.Api.Endpoints;
 
-/// <summary>The board endpoints, under <c>/api/v1/boards</c>.</summary>
 public static partial class BoardEndpoints
 {
     public static void MapBoardEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        // Return types document the success responses and the 400 validation problems. ProducesProblem adds the rest:
-        // the 404 and 422 problems, because ProblemHttpResult has no fixed status, and the 400 that ASP.NET Core itself
-        // sends for an id that is not a GUID. The {id} routes have no {id:guid} constraint, so such an id fails binding
-        // with 400 instead of matching no route with 404. The 503 on next, generations and final is what the rate
-        // limiter sends when they are at their concurrency limit.
         var boards = endpoints.MapGroup("/api/v1/boards");
 
         boards.MapPost("/", UploadAsync)
-            .WithName("UploadBoard")
-            .WithSummary("Upload a board");
+            .WithName("UploadBoard").WithSummary("Upload a board")
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
+            .ProducesProblem(StatusCodes.Status415UnsupportedMediaType)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         boards.MapGet("/{id}", FetchAsync)
-            .WithName("GetBoard")
-            .WithSummary("Get a stored board")
-            .ProducesProblem(StatusCodes.Status400BadRequest)
-            .ProducesProblem(StatusCodes.Status404NotFound);
-
-        boards.MapGet("/{id}/next", FetchNextGenerationAsync)
-            .WithName("GetNextGeneration")
-            .WithSummary("Get the next generation of a stored board")
+            .WithName("GetBoard").WithSummary("Get a stored board")
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
+
+        boards.MapPost("/{id}/next", NextAsync)
+            .WithName("GetNextGeneration").WithSummary("Advance and persist the next generation")
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
 
-        boards.MapGet("/{id}/generations/{n}", FetchGenerationAsync)
-            .WithName("GetGeneration")
-            .WithSummary("Get a stored board n generations ahead")
+        boards.MapGet("/{id}/generations/{n}", ProjectAsync)
+            .WithName("GetGeneration").WithSummary("Project n generations from the current snapshot without saving")
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
 
-        boards.MapGet("/{id}/final", FindFinalStateAsync)
-            .WithName("GetFinalState")
-            .WithSummary("Get the final state of a stored board")
+        boards.MapPost("/{id}/final", FinalAsync)
+            .WithName("GetFinalState").WithSummary("Find and persist a stable state or cycle")
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict)
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
             .RequireRateLimiting(SimulationConcurrencyLimit.PolicyName);
     }
 
     private static async Task<Results<Created<UploadBoardResponse>, ValidationProblem>> UploadAsync(
-        UploadBoardRequest request,
-        IBoardRepository repository,
-        IOptions<GameOfLifeOptions> options,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken)
+        UploadBoardRequest request, IBoardRepository repository, IOptions<GameOfLifeOptions> options,
+        ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
         if (!BoardRequestValidator.TryValidate(request.Cells, options.Value, out var errors))
         {
@@ -68,108 +64,104 @@ public static partial class BoardEndpoints
 
         int rows = request.Cells.Length;
         int columns = request.Cells[0].Length;
-        var cells = new bool[rows, columns];
-        for (int row = 0; row < rows; row++)
-        {
-            for (int column = 0; column < columns; column++)
-            {
-                cells[row, column] = request.Cells[row][column] == 1;
-            }
-        }
-
         var id = Guid.NewGuid();
-        await repository.AddAsync(id, Board.FromCells(cells), cancellationToken);
-
+        await repository.AddAsync(id, BoardMatrixMapper.FromMatrix(request.Cells, rows, columns), cancellationToken);
         LogStored(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, rows, columns);
         return TypedResults.Created($"/api/v1/boards/{id}", new UploadBoardResponse(id));
     }
 
     private static async Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> FetchAsync(
-        Guid id,
-        IBoardRepository repository,
-        CancellationToken cancellationToken)
+        Guid id, IBoardRepository repository, CancellationToken cancellationToken)
     {
-        var board = await repository.FindAsync(id, cancellationToken);
-        if (board is null)
-        {
-            return BoardNotFound(id);
-        }
-
-        return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 0, board));
+        var state = await repository.FindAsync(id, cancellationToken);
+        return state is null ? BoardNotFound(id) : TypedResults.Ok(BoardMapper.ToStateResponse(state));
     }
 
-    private static async Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> FetchNextGenerationAsync(
-        Guid id,
-        IBoardRepository repository,
-        CancellationToken cancellationToken)
-    {
-        var board = await repository.FindAsync(id, cancellationToken);
-        if (board is null)
-        {
-            return BoardNotFound(id);
-        }
+    private static Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> NextAsync(
+        Guid id, BoardService service, IOptions<GameOfLifeOptions> options, ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken) => MutateAsync(id, false, service, options, loggerFactory, cancellationToken);
 
-        return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: 1, board.Next()));
+    private static Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> FinalAsync(
+        Guid id, BoardService service, IOptions<GameOfLifeOptions> options, ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken) => MutateAsync(id, true, service, options, loggerFactory, cancellationToken);
+
+    private static async Task<Results<Ok<BoardStateResponse>, ProblemHttpResult>> MutateAsync(
+        Guid id, bool toFinalState, BoardService service, IOptions<GameOfLifeOptions> options,
+        ILoggerFactory loggerFactory, CancellationToken cancellationToken)
+    {
+        var result = await service.AdvanceAsync(id, toFinalState, cancellationToken);
+        switch (result.Error)
+        {
+            case MutationError.NotFound:
+                return BoardNotFound(id);
+            case MutationError.Terminal:
+                return TypedResults.Problem(
+                    statusCode: StatusCodes.Status409Conflict, title: "Board is terminal",
+                    detail: "This board has completed. Fetch its final state or upload a new board.",
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["boardStatus"] = result.State?.Status.ToString(),
+                        ["finalStateUrl"] = $"/api/v1/boards/{id}",
+                    });
+            case MutationError.IterationLimit:
+                int limit = options.Value.MaxFinalStateGenerations;
+                LogNoFinalState(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, limit);
+                return TypedResults.Problem(
+                    statusCode: StatusCodes.Status422UnprocessableEntity, title: "Board did not reach a final state",
+                    detail: $"The board did not repeat an earlier generation within the limit of {limit} generations.",
+                    extensions: new Dictionary<string, object?> { ["maxGenerations"] = limit });
+            case MutationError.GenerationLimit:
+                return GenerationLimit();
+            case MutationError.BoardSizeLimit:
+                return BoardSizeLimit();
+            default:
+                return TypedResults.Ok(BoardMapper.ToStateResponse(result.State
+                    ?? throw new InvalidOperationException("A successful mutation must return a state.")));
+        }
     }
 
-    private static async Task<Results<Ok<BoardStateResponse>, ValidationProblem, ProblemHttpResult>> FetchGenerationAsync(
-        Guid id,
-        int n,
-        IBoardRepository repository,
-        IOptions<GameOfLifeOptions> options,
-        CancellationToken cancellationToken)
+    private static async Task<Results<Ok<BoardProjectionResponse>, ValidationProblem, ProblemHttpResult>> ProjectAsync(
+        Guid id, int n, IBoardRepository repository, IOptions<GameOfLifeOptions> options, CancellationToken cancellationToken)
     {
-        int maxGenerationsAhead = options.Value.MaxGenerationsAhead;
-        if (n < 0 || n > maxGenerationsAhead)
+        int limit = options.Value.MaxGenerationsAhead;
+        if (n < 0 || n > limit)
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["n"] = [$"The generation must be 0 to {maxGenerationsAhead}; this request asks for {n}."],
+                ["n"] = [$"The generation must be 0 to {limit}; this request asks for {n}."],
             });
         }
 
-        var board = await repository.FindAsync(id, cancellationToken);
-        if (board is null)
+        var state = await repository.FindAsync(id, cancellationToken);
+        if (state is null)
         {
             return BoardNotFound(id);
         }
 
-        var advanced = Simulation.Advance(board, n, cancellationToken);
-        return TypedResults.Ok(BoardMapper.ToStateResponse(id, generation: n, advanced));
-    }
-
-    private static async Task<Results<Ok<FinalStateResponse>, ProblemHttpResult>> FindFinalStateAsync(
-        Guid id,
-        IBoardRepository repository,
-        IOptions<GameOfLifeOptions> options,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken)
-    {
-        var board = await repository.FindAsync(id, cancellationToken);
-        if (board is null)
+        if (!options.Value.AllowsSimulation(state.Board))
         {
-            return BoardNotFound(id);
+            return BoardSizeLimit();
         }
 
-        int maxGenerations = options.Value.MaxFinalStateGenerations;
-        var finalState = Simulation.FindFinalState(board, maxGenerations, cancellationToken);
-        if (finalState is null)
+        if (state.Generation > long.MaxValue - n)
         {
-            LogNoFinalState(loggerFactory.CreateLogger(typeof(BoardEndpoints)), id, maxGenerations);
-            return TypedResults.Problem(
-                detail: $"The board did not repeat an earlier generation within the limit of {maxGenerations} generations.",
-                statusCode: StatusCodes.Status422UnprocessableEntity,
-                title: "Board did not reach a final state",
-                extensions: new Dictionary<string, object?> { ["maxGenerations"] = maxGenerations });
+            return GenerationLimit();
         }
 
-        return TypedResults.Ok(BoardMapper.ToFinalStateResponse(id, finalState));
+        var board = Simulation.Advance(state.Board, n, cancellationToken);
+        return TypedResults.Ok(new BoardProjectionResponse(id, state.Generation + n, board.Rows, board.Columns, BoardMatrixMapper.ToMatrix(board), state.Generation));
     }
 
     private static ProblemHttpResult BoardNotFound(Guid id) => TypedResults.Problem(
-        detail: $"No board is stored under the id {id}.",
-        statusCode: StatusCodes.Status404NotFound,
-        title: "Board not found");
+        detail: $"No board is stored under the id {id}.", statusCode: StatusCodes.Status404NotFound, title: "Board not found");
+
+    private static ProblemHttpResult GenerationLimit() => TypedResults.Problem(
+        detail: "This operation would exceed the supported generation counter.",
+        statusCode: StatusCodes.Status409Conflict, title: "Generation limit reached");
+
+    private static ProblemHttpResult BoardSizeLimit() => TypedResults.Problem(
+        detail: "The stored board exceeds the currently configured simulation dimensions.",
+        statusCode: StatusCodes.Status422UnprocessableEntity, title: "Board exceeds simulation limits");
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Stored board {BoardId} of {Rows} x {Columns} cells")]
     private static partial void LogStored(ILogger logger, Guid boardId, int rows, int columns);

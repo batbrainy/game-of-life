@@ -11,7 +11,7 @@ public static class Simulation
         ArgumentOutOfRangeException.ThrowIfNegative(generations);
 
         var current = board;
-        for (int generation = 1; generation <= generations; generation++)
+        for (int generation = 0; generation < generations; generation++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             current = current.Next();
@@ -26,7 +26,7 @@ public static class Simulation
     /// </summary>
     /// <returns>
     /// The first state of the cycle, or <see langword="null"/> when no generation repeated within the limit, which
-    /// means a result exists only when its Generation + Period is at most <paramref name="maxGenerations"/>.
+    /// means its GenerationsComputed is at most <paramref name="maxGenerations"/>.
     /// </returns>
     /// <exception cref="OperationCanceledException">The token was cancelled before a generation was computed.</exception>
     public static FinalState? FindFinalState(Board board, int maxGenerations, CancellationToken cancellationToken)
@@ -38,8 +38,9 @@ public static class Simulation
         // repeat is found with one lookup instead of a comparison against every earlier generation.
         var firstSeenAt = new Dictionary<Board, int> { [board] = 0 };
         var current = board;
-        for (int generation = 1; generation <= maxGenerations; generation++)
+        for (int step = 0; step < maxGenerations; step++)
         {
+            int generation = step + 1;
             cancellationToken.ThrowIfCancellationRequested();
             current = current.Next();
 
