@@ -298,10 +298,12 @@ export API_PORT=18080 DB_PORT=15433
 docker compose up --build -d --wait
 scripts/smoke-test.sh http://localhost:18080
 scripts/verify-restart.sh http://localhost:18080
-docker compose down -v  # deletes only this verification project's data
+docker compose down -v
 unset COMPOSE_PROJECT_NAME COMPOSE_FILE API_PORT DB_PORT
 rm /tmp/gameoflife-verification.yaml
 ```
+
+The `down -v` cleanup deletes only this verification project's data.
 
 ### Measured costs
 
