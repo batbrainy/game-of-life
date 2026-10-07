@@ -133,7 +133,7 @@ Tracked as GitHub issues and listed by issue number. The work did not follow the
 - The `aspnet:8.0-alpine` image has BusyBox `wget` and no `curl`, so the `api` health check runs `wget -q --spider`.
 - Simulation speed, and therefore the default limits: measured on an Apple M1 Max (10 cores, 64 GiB; Docker's VM has 10 CPUs and 7.7 GiB) with `cp .env.example .env`, `docker compose up --build -d`, then `scripts/measure-worst-case.sh`.
 - Limits of 1000 gave medians of 1.29 to 1.32 s one request at a time, so both limits are 500: medians of 0.67 to 0.76 s one request at a time and 0.91 to 1.32 s with 10 at once.
-- Not yet addressed: while 10 simulations run, a new request can wait for a free thread-pool thread, so the 503 for a request beyond the bound took up to 1.14 s and `/health/live` up to 0.93 s.
+- Thread-pool threads: while 10 simulations ran, a new request could wait for a free thread-pool thread, so the 503 for a request beyond the bound took up to 1.14 s and `/health/live` up to 0.93 s. The API now raises the pool's minimum worker threads at startup to the processor count plus `MaxConcurrentSimulations`. In three runs each way on 2026-10-06, with other applications open, the slowest 503 went from 0.87 s to 0.097 s and the slowest `/health/live` from 0.72 s to 0.034 s. Their medians, higher than those above, were 0.80 to 0.83 s before and 0.79 to 0.81 s after one request at a time, and 0.99 to 1.37 s before and 0.95 to 1.13 s after with 10 at once.
 
 ## Out of scope
 

@@ -200,10 +200,9 @@ turned_away_response() {
 # Sends GET /next for a small board every tenth of a second, each request in the background, until one has been
 # answered with 503 and Retry-After: 1 or every timed request has finished, and then waits for every request to
 # finish. The first one waits too, so that the timed requests have taken every permit before it arrives; sent sooner,
-# it could take a permit and leave a timed request to be turned away. They go in the background because an answer can
-# be late: while the timed requests keep the API's thread-pool threads busy, a new request waits for a free one before
-# the bound is checked, and one that gets a thread only when a timed request finishes can find a free permit and get
-# 200. So a batch can end with no extra request turned away even though the bound works.
+# it could take a permit and leave a timed request to be turned away. They go in the background so that a slow answer
+# does not hold up the next one. An extra request that finds a permit free gets 200, so a batch can end with no extra
+# request turned away even though the bound works.
 send_extra_requests() {
     extra=0
     while [ "$(finished_count)" -lt "$max_concurrent_simulations" ] && [ -z "$(turned_away_response)" ]; do
